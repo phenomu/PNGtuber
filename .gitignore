@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+venv/
+.venv/
+wvenv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# User data
+*.log
+
+# Private dev docs (local only, not for GitHub)
+PROMPT.md
+TRACKER.md
+CONTEXT.md
+README-PRIV.md
+
+# OS
+Thumbs.db
+.DS_Store

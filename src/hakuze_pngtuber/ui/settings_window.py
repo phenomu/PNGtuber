@@ -34,6 +34,7 @@ class SettingsWindow(QMainWindow):
     """Cyberpunk-styled control panel; owns overlay + audio + controller."""
 
     closing_to_tray = Signal()
+    really_quit_requested = Signal()
 
     TABS = ("Avatar", "Audio", "Animation", "Overlay", "App")
 
@@ -497,5 +498,5 @@ class SettingsWindow(QMainWindow):
         super().closeEvent(event)
 
     def really_quit(self) -> None:
-        self._settings.set("app.minimize_to_tray", False)
-        self.close()
+        """Tray Quit: request full app termination (main cleans up)."""
+        self.really_quit_requested.emit()

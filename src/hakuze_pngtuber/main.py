@@ -74,6 +74,18 @@ def main() -> int:
         "Hakuze PNGtuber", "Minimized to tray - double-click to reopen",
         QSystemTrayIcon.Information, 2500))
 
+    def _full_quit() -> None:
+        """Tray Quit: stop everything and exit the event loop for real."""
+        win._poll.stop()
+        engine.stop()
+        if win._overlay is not None:
+            win._overlay.stop()
+        settings.save()
+        tray.hide()
+        QApplication.quit()
+
+    win.really_quit_requested.connect(_full_quit)
+
     if not bool(settings.get("app.start_minimized", False)):
         win.show()
 

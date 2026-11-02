@@ -47,4 +47,6 @@ if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
 Pop-Location
 Write-Host ""
-Write-Host "Setup complete. Launch with: powershell -File scripts\run_windows.ps1" -ForegroundColor Green
+Write-Host "Setup complete. Launch with:" -ForegroundColor Green
+Write-Host "    .\run.cmd        (simplest - double-click works too)"
+Write-Host "    powershell -ExecutionPolicy Bypass -File scripts\run_windows.ps1"

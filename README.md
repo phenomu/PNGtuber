@@ -32,9 +32,15 @@ Requires Python 3.11+ on Windows.
 ```powershell
 git clone https://github.com/phenomu/PNGtuber.git
 cd PNGtuber
-powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
-powershell -File scripts\run_windows.ps1
+.\setup.cmd
+.\run.cmd
 ```
+
+(`setup.cmd` / `run.cmd` are plain batch files — they work regardless of
+PowerShell execution policy. PowerShell equivalents:
+`powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1` /
+`...\run_windows.ps1` — the `-ExecutionPolicy Bypass` flag is required on
+default Windows installs.)
 
 ### Option B — prebuilt release
 

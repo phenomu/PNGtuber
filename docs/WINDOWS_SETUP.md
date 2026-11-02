@@ -11,10 +11,10 @@
    cd PNGtuber
    ```
 
-3. Set up the venv + dependencies:
+3. Set up the venv + dependencies (batch file, no execution-policy issues):
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
+   .\setup.cmd
    ```
 
    Creates `.wvenv\` and installs runtime + dev dependencies
@@ -23,7 +23,7 @@
 4. Launch:
 
    ```powershell
-   powershell -File scripts\run_windows.ps1
+   .\run.cmd
    ```
 
    The settings window appears; a tray icon runs the app in the background.

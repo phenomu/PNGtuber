@@ -10,11 +10,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QStatusBar,
     QTabWidget,
     QVBoxLayout,
@@ -64,7 +66,8 @@ class SettingsWindow(QMainWindow):
         self._muted = False
 
         self.setWindowTitle("Hakuze PNGtuber")
-        self.setMinimumSize(560, 640)
+        self.setMinimumSize(600, 560)
+        self.resize(620, 760)
         self.setStyleSheet(STYLESHEET)
 
         root = QWidget()
@@ -101,7 +104,13 @@ class SettingsWindow(QMainWindow):
             page_layout.setSpacing(12)
             build(page_layout)
             page_layout.addStretch(1)
-            self.tabs.addTab(page, name)
+            # scroll area per tab: on Windows (bigger fonts/DPI) the audio
+            # tab content can exceed the window height and widgets overlapped
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(page)
+            self.tabs.addTab(scroll, name)
         layout.addWidget(self.tabs, 1)
 
         self.statusBar().showMessage("ready")

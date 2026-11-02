@@ -16,8 +16,13 @@ import numpy as np
 
 try:
     import sounddevice as _sd
-except ImportError:  # allows importing the module for tests without audio stack
+    _SD_IMPORT_ERROR = None
+except ImportError as _exc:  # allows importing the module for tests without audio stack
     _sd = None
+    _SD_IMPORT_ERROR = f"sounddevice not installed: {_exc}"
+except OSError as _exc:  # PortAudio shared library missing (headless WSL test env)
+    _sd = None
+    _SD_IMPORT_ERROR = f"audio backend unavailable: {_exc}"
 
 from ..utils.audio_utils import block_rms
 
@@ -55,7 +60,7 @@ class AudioEngine:
     # ------------------------------------------------------------------
     @staticmethod
     def available() -> bool:
-        return _sd is not None
+        return _sd is not None and _SD_IMPORT_ERROR is None
 
     @staticmethod
     def list_devices() -> list[dict]:
@@ -92,7 +97,7 @@ class AudioEngine:
     def start(self, device_index: int | None = None) -> bool:
         """Open the input stream. Returns True on success."""
         if _sd is None:
-            self.last_error = "sounddevice not installed"
+            self.last_error = _SD_IMPORT_ERROR or "sounddevice not available"
             return False
         with self._lock:
             if self._stream is not None:

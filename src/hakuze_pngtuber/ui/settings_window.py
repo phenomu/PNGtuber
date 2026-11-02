@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from pathlib import Path
 
 from ..core.asset_manager import AssetManager
 from ..core.audio_engine import AudioEngine
@@ -28,6 +30,17 @@ from ..core.speech_detector import Calibrator
 from .avatar_overlay import AvatarOverlay
 from .styles import STYLESHEET
 from .widgets import LabeledSlider, LevelMeter, NumberBox, ToggleRow, section
+
+
+def _short_path(path: str, limit: int = 32) -> str:
+    """Compact a file path for preview labels: keep filename, trim middle."""
+    if not path:
+        return "placeholder"
+    name = Path(path).name
+    if len(name) <= limit:
+        return name
+    half = (limit - 3) // 2
+    return name[:half] + "..." + name[-half:]
 
 
 class SettingsWindow(QMainWindow):
@@ -48,6 +61,7 @@ class SettingsWindow(QMainWindow):
         self._overlay: AvatarOverlay | None = None
         self._calibrator: Calibrator | None = None
         self._calibration_phase = None  # None | "noise" | "speech"
+        self._muted = False
 
         self.setWindowTitle("Hakuze PNGtuber")
         self.setMinimumSize(560, 640)
@@ -125,22 +139,47 @@ class SettingsWindow(QMainWindow):
     # ------------------------------------------------------------------ AV
     def _build_avatar_tab(self, L: QVBoxLayout) -> None:
         panel, col = section("character images")
-        row = QHBoxLayout()
         self.btn_idle_img = QPushButton("select idle PNG")
         self.btn_idle_img.setObjectName("flat")
         self.btn_talk_img = QPushButton("select talking PNG")
         self.btn_talk_img.setObjectName("flat")
         self.btn_idle_img.clicked.connect(lambda: self._pick_image("idle_image"))
         self.btn_talk_img.clicked.connect(lambda: self._pick_image("talking_image"))
+        row = QHBoxLayout()
         row.addWidget(self.btn_idle_img, 1)
         row.addWidget(self.btn_talk_img, 1)
         col.addLayout(row)
+
+        # live preview of current idle / talking art
+        preview_row = QHBoxLayout()
+        idle_box = QVBoxLayout()
+        self.preview_idle = QLabel("IDLE")
+        self.preview_idle.setObjectName("subtitle")
+        self.preview_idle.setAlignment(Qt.AlignCenter)
+        self.preview_idle_img = QLabel()
+        self.preview_idle_img.setAlignment(Qt.AlignCenter)
+        self.preview_idle_img.setFixedSize(150, 150)
+        idle_box.addWidget(self.preview_idle_img)
+        idle_box.addWidget(self.preview_idle)
+        talk_box = QVBoxLayout()
+        self.preview_talk = QLabel("TALKING")
+        self.preview_talk.setObjectName("subtitle")
+        self.preview_talk.setAlignment(Qt.AlignCenter)
+        self.preview_talk_img = QLabel()
+        self.preview_talk_img.setAlignment(Qt.AlignCenter)
+        self.preview_talk_img.setFixedSize(150, 150)
+        talk_box.addWidget(self.preview_talk_img)
+        talk_box.addWidget(self.preview_talk)
+        preview_row.addLayout(idle_box)
+        preview_row.addLayout(talk_box)
+        col.addLayout(preview_row)
+        self._update_preview()
         L.addWidget(panel)
 
         panel, col = section("size & position")
         self.sl_scale = LabeledSlider("avatar scale", 0.05, 2.0,
                                       float(self._settings.get("avatar.scale", 0.55)))
-        self.sl_scale.value_changed.connect(lambda v: self._set_and_save("avatar.scale", v))
+        self.sl_scale.value_changed.connect(self._on_scale_changed)
         col.addWidget(self.sl_scale)
 
         pos_row = QHBoxLayout()
@@ -170,7 +209,7 @@ class SettingsWindow(QMainWindow):
         panel, col = section("look")
         self.sl_gray = LabeledSlider("idle grayscale intensity", 0.0, 1.0,
                                      float(self._settings.get("avatar.grayscale_intensity", 0.85)))
-        self.sl_gray.value_changed.connect(lambda v: self._set_and_save("avatar.grayscale_intensity", v))
+        self.sl_gray.value_changed.connect(self._on_grayscale_changed)
         col.addWidget(self.sl_gray)
         L.addWidget(panel)
 
@@ -181,6 +220,20 @@ class SettingsWindow(QMainWindow):
         self._refresh_devices()
         self.cmb_device.currentIndexChanged.connect(self._on_device_changed)
         col.addWidget(self.cmb_device)
+
+        btn_dev_row = QHBoxLayout()
+        self.btn_refresh_dev = QPushButton("refresh device list")
+        self.btn_refresh_dev.setObjectName("flat")
+        self.btn_refresh_dev.clicked.connect(self._refresh_devices_and_ui)
+        btn_dev_row.addWidget(self.btn_refresh_dev)
+        col.addLayout(btn_dev_row)
+
+        mute_row = QHBoxLayout()
+        self.btn_mute = QPushButton("mute microphone")
+        self.btn_mute.setCheckable(True)
+        self.btn_mute.toggled.connect(self._on_mute_toggled)
+        mute_row.addWidget(self.btn_mute)
+        col.addLayout(mute_row)
 
         self.meter = LevelMeter()
         col.addWidget(self.meter)
@@ -198,6 +251,7 @@ class SettingsWindow(QMainWindow):
         col.addLayout(btn_row)
         self.calibration_label = QLabel("")
         self.calibration_label.setObjectName("subtitle")
+        self.calibration_label.setWordWrap(True)
         col.addWidget(self.calibration_label)
         L.addWidget(panel)
 
@@ -317,7 +371,7 @@ class SettingsWindow(QMainWindow):
 
     # ================================================================= poll
     def _on_poll(self) -> None:
-        sample = self._engine.poll()
+        sample = None if self._muted else self._engine.poll()
         if sample is not None:
             level, t_ms = sample
             sens = float(self._settings.get("audio.sensitivity", 0.5))
@@ -348,7 +402,9 @@ class SettingsWindow(QMainWindow):
             if self._overlay is not None:
                 self._overlay.reload_assets()
                 self._overlay.update_display_size()
-            self.placeholder_warning.setText("")
+            self._update_preview()
+            if not self._assets.using_placeholder:
+                self.placeholder_warning.setText("")
 
     def _refresh_devices(self) -> None:
         self.cmb_device.blockSignals(True)
@@ -373,6 +429,53 @@ class SettingsWindow(QMainWindow):
             QMessageBox.warning(self, "Microphone",
                                 f"Could not open microphone:\n{self._engine.last_error}")
 
+    def _on_scale_changed(self, v: float) -> None:
+        self._set_and_save("avatar.scale", v)
+        if self._overlay is not None:
+            self._overlay.refresh_look()
+
+    def _on_grayscale_changed(self, v: float) -> None:
+        self._set_and_save("avatar.grayscale_intensity", v)
+        if self._overlay is not None:
+            self._overlay.refresh_look()
+        self._update_preview()
+
+    def _update_preview(self) -> None:
+        """Show the currently selected idle/talking art (or placeholder)."""
+        from .avatar_overlay import pil_to_qpixmap
+        from ..utils.image_utils import desaturate
+        try:
+            idle, talk = self._assets.get_images()
+        except Exception:
+            return
+        gray = desaturate(idle, float(self._settings.get("avatar.grayscale_intensity", 0.85)))
+        for img, label in ((gray, self.preview_idle_img), (talk, self.preview_talk_img)):
+            pm = pil_to_qpixmap(img).scaled(
+                150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            label.setPixmap(pm)
+        idle_src = self._settings.get("avatar.idle_image", "") or "placeholder"
+        talk_src = self._settings.get("avatar.talking_image", "") or "placeholder"
+        self.preview_idle.setText("IDLE\n" + _short_path(idle_src))
+        self.preview_talk.setText("TALKING\n" + _short_path(talk_src))
+
+    def _refresh_devices_and_ui(self) -> None:
+        self._refresh_devices()
+        self.statusBar().showMessage("device list refreshed", 2000)
+
+    def _on_mute_toggled(self, muted: bool) -> None:
+        self._muted = muted
+        if muted:
+            self._engine.stop()
+            self.btn_mute.setText("unmute microphone")
+            self.statusBar().showMessage("microphone muted", 2000)
+        else:
+            dev = self._settings.get("audio.device_index")
+            ok = self._engine.start(dev)
+            self.btn_mute.setText("mute microphone")
+            self.statusBar().showMessage(
+                "microphone live" if ok else f"mic error: {self._engine.last_error}",
+                3000)
+
     def _on_sensitivity(self, v: float) -> None:
         self._set_and_save("audio.sensitivity", v)
 
@@ -386,6 +489,16 @@ class SettingsWindow(QMainWindow):
 
     # calibration ------------------------------------------------------
     def _start_calibration(self) -> None:
+        if self._muted:
+            self.calibration_label.setText("unmute the microphone first")
+            return
+        if not self._engine.running:
+            dev = self._settings.get("audio.device_index")
+            self._engine.start(dev)
+        if not self._engine.running:
+            self.calibration_label.setText(
+                f"no microphone: {self._engine.last_error}")
+            return
         self._calibrator = Calibrator()
         self._calibration_phase = "noise"
         self.calibration_label.setText("calibrating: stay SILENT (measuring noise)...")

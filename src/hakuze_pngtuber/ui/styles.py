@@ -20,6 +20,9 @@ QLabel#subtitle {
     color: #7f8fa6;
     font-size: 11px;
 }
+QComboBox, QSpinBox, QDoubleSpinBox {
+    min-height: 18px;
+}
 QLabel#sectionHeader {
     color: #b96bff;
     font-size: 13px;
@@ -113,9 +116,10 @@ QPushButton {
     color: #e8fbff;
     border: 1px solid #21e6ff;
     border-radius: 9px;
-    padding: 8px 16px;
+    padding: 10px 18px;
     font-weight: 600;
     font-size: 12px;
+    min-height: 18px;
 }
 QPushButton:hover {
     background: #0aa3cc;

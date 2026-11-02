@@ -63,11 +63,17 @@ class AvatarOverlay(QWidget):
     # ------------------------------------------------------------------
     def reload_assets(self) -> None:
         idle, talk = self._assets.get_images()
+        self._idle_pil = idle
+        self._talk_pil = talk
         self._idle_pm = pil_to_qpixmap(idle)
         self._talk_pm = pil_to_qpixmap(talk)
-        gray = desaturate(idle, self._settings.get("avatar.grayscale_intensity", 0.85))
-        self._idle_gray_pm = pil_to_qpixmap(gray)
+        self._refresh_gray()
         self._relayout()
+
+    def _refresh_gray(self) -> None:
+        gray = desaturate(self._idle_pil,
+                          float(self._settings.get("avatar.grayscale_intensity", 0.85)))
+        self._idle_gray_pm = pil_to_qpixmap(gray)
 
     def _relayout(self) -> None:
         screen_h = 1080
@@ -125,6 +131,15 @@ class AvatarOverlay(QWidget):
             self.state_changed.emit(talking)
 
     def update_display_size(self) -> None:
+        self._relayout()
+        self.update()
+
+    def refresh_look(self) -> None:
+        """Re-render pixmaps after grayscale/scale/image changes."""
+        if getattr(self, "_idle_pil", None) is None:
+            self.reload_assets()
+            return
+        self._refresh_gray()
         self._relayout()
         self.update()
 

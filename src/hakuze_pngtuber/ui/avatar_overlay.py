@@ -40,6 +40,7 @@ class AvatarOverlay(QWidget):
                          | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setWindowTitle("Hakuze PNGtuber Overlay")
 
         self._assets = assets
         self._anim = animation

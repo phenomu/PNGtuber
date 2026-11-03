@@ -204,6 +204,17 @@ class AssistantSettingsTab(QWidget):
             lambda: self._save("ai.stt_model", self.ed_stt_model.text()))
         col.addLayout(row)
         row = QHBoxLayout()
+        row.addWidget(QLabel("stt base url"))
+        self.ed_stt_base = QLineEdit(
+            str(settings.get("ai.stt_base_url", "")))
+        self.ed_stt_base.setPlaceholderText(
+            "empty = OpenAI direct; set your LLM gateway URL (e.g. "
+            "https://api.ate.my.id/v1) to reuse the LLM key for STT")
+        self.ed_stt_base.editingFinished.connect(
+            lambda: self._save("ai.stt_base_url", self.ed_stt_base.text()))
+        row.addWidget(self.ed_stt_base, 1)
+        col.addLayout(row)
+        row = QHBoxLayout()
         row.addWidget(QLabel("language"))
         self.cmb_stt_lang = QComboBox()
         self.cmb_stt_lang.addItem("auto", "")

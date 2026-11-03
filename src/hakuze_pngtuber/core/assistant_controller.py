@@ -235,9 +235,17 @@ class AssistantController:
                 timeout_s=self._cfg.llm_timeout_s)
 
         if hasattr(self._stt, "reconfigure"):
+            stt_base = (self._cfg.stt_base_url or "").strip()
+            if stt_base:
+                # routed through the user's LLM gateway (e.g. 9Router):
+                # the OpenAI key stays empty and the LLM key is reused
+                stt_key = creds.get("llm_api_key")
+            else:
+                stt_key = creds.get("openai_api_key")
             self._stt.reconfigure(
-                api_key=creds.get("openai_api_key"),
-                model=self._cfg.stt_model)
+                api_key=stt_key,
+                model=self._cfg.stt_model,
+                base_url=stt_base or None)
 
         tts = self._tts
         current = getattr(tts.provider, "name", "")
@@ -551,8 +559,15 @@ class AssistantController:
             self.fsm.transition(AssistantState.IDLE)
             return
         except STTError as exc:
-            self.append_log(f"stt: FAILED - {exc.user_message}")
-            self._fail(exc.user_message)
+            detail = exc.user_message
+            if detail == "transcription failed":
+                # generic bucket - surface the provider's raw text (clamped,
+                # never contains credentials) so the log shows the real
+                # cause: auth / model id / network
+                raw = str(exc).strip().replace("\n", " ")[:160] or "unknown"
+                detail = f"transcription failed ({raw})"
+            self.append_log(f"stt: FAILED - {detail}")
+            self._fail(detail)
             return
         if self._cancel_turn.is_set():
             self.fsm.transition(AssistantState.IDLE)

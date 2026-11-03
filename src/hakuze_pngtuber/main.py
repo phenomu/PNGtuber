@@ -98,8 +98,11 @@ def main() -> int:
             streaming=ai_cfg.llm_streaming)
 
         stt_provider = OpenAISTT(
-            api_key=credentials.get("openai_api_key"),
-            model=ai_cfg.stt_model)
+            api_key=(credentials.get("llm_api_key")
+                     if (ai_cfg.stt_base_url or "").strip()
+                     else credentials.get("openai_api_key")),
+            model=ai_cfg.stt_model,
+            base_url=(ai_cfg.stt_base_url or "").strip() or None)
 
         if ai_cfg.tts_provider == "openai":
             tts_provider = OpenAITTS(

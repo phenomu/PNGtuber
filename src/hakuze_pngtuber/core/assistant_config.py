@@ -34,6 +34,7 @@ class AssistantSettings:
     llm_streaming: bool = True
     # stt (OpenAI)
     stt_model: str = "gpt-4o-mini-transcribe"
+    stt_base_url: str = ""      # empty = api.openai.com; else route via gateway
     stt_language: str = ""          # "" = auto
     stt_timeout_s: float = 30.0
     # tts
@@ -105,6 +106,7 @@ class AssistantSettings:
         out.llm_timeout_s = gf("llm_timeout_s", 60.0, 5.0, 300.0)
         out.llm_streaming = gb("llm_streaming", True)
         out.stt_model = gs("stt_model", "gpt-4o-mini-transcribe", 120).strip()
+        out.stt_base_url = gs("stt_base_url", "", 300).strip()
         out.stt_language = gs("stt_language", "", 16).strip().lower()
         out.stt_timeout_s = gf("stt_timeout_s", 30.0, 5.0, 120.0)
         prov = gs("tts_provider", "windows", 40)

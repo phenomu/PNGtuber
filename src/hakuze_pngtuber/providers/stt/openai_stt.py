@@ -12,10 +12,12 @@ from typing import Any
 from .base import BaseSTTProvider, STTError, STTCancelled, STTRequest
 
 _ERR_MAP = {
-    "401": "invalid OpenAI API key",
-    "403": "OpenAI API key not authorized",
-    "429": "OpenAI rate limit reached",
-    "timeout": "OpenAI transcription timed out",
+    "401": "invalid API key (check STT key in AI tab, or route STT via the LLM gateway)",
+    "403": "API key not authorized for this model/endpoint",
+    "404": "model or endpoint not found on this provider (check STT model id)",
+    "429": "rate limit reached",
+    "timeout": "transcription timed out",
+    "insufficient_quota": "billing quota exhausted",
 }
 
 
@@ -23,33 +25,44 @@ class OpenAISTT(BaseSTTProvider):
     name = "openai-stt"
 
     def __init__(self, api_key: str | None, model: str = "gpt-4o-mini-transcribe",
+                 base_url: str | None = None,
                  client_factory=None):
         self._api_key = api_key or ""
         self._model = model
+        self._base_url = (base_url or "").strip() or None
         self._client_factory = client_factory
         self._client: Any | None = None
 
     def _get_client(self):
         if self._client is None:
             if self._client_factory is not None:
-                self._client = self._client_factory(api_key=self._api_key)
+                self._client = self._client_factory(
+                    api_key=self._api_key, base_url=self._base_url)
             else:
                 import openai  # noqa: PLC0415 - lazy by design
-                self._client = openai.OpenAI(
+                kwargs: dict[str, Any] = dict(
                     api_key=self._api_key or "missing", max_retries=1,
                     timeout=30.0)  # SDK default is 600s - never wait that long
+                if self._base_url:
+                    # routed through a gateway (e.g. 9Router): same key as
+                    # the LLM then, and the endpoint must exist there
+                    kwargs["base_url"] = self._base_url
+                self._client = openai.OpenAI(**kwargs)
         return self._client
 
     def reset(self) -> None:
         self._client = None
 
     def reconfigure(self, api_key: str | None = None,
-                    model: str | None = None) -> None:
-        """Hot-apply new credentials/model; drops the cached client."""
+                    model: str | None = None,
+                    base_url: str | None = None) -> None:
+        """Hot-apply new credentials/model/base_url; drops the cached client."""
         if api_key is not None:
             self._api_key = api_key
         if model is not None:
             self._model = model or "gpt-4o-mini-transcribe"
+        if base_url is not None:
+            self._base_url = (base_url or "").strip() or None
         self._client = None
 
     def transcribe(self, request: STTRequest) -> str:

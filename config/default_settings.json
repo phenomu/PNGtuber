@@ -57,6 +57,7 @@
         "llm_timeout_s": 60.0,
         "llm_streaming": true,
         "stt_model": "gpt-4o-mini-transcribe",
+        "stt_base_url": "",
         "stt_language": "",
         "stt_timeout_s": 30.0,
         "tts_provider": "windows",

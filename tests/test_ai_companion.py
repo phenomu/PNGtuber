@@ -704,6 +704,63 @@ class TestAssistantController:
         assert "heard" in lines  # mock STT transcript captured in log
         ctrl.shutdown()
 
+    def test_stt_generic_error_logs_raw_detail(self, settings, contexts,
+                                               conversations):
+        # the user hit 'stt: FAILED - transcription failed' with zero
+        # detail - the raw provider text must reach the log panel
+        from hakuze_pngtuber.providers.stt.base import STTError
+        tts = TTSEngine(MockTTS())
+        llm = LLMEngine(MockLLM(["Oke!"]), contexts,
+                        conversations, streaming=False)
+        ctrl = AssistantController(
+            settings, contexts, conversations, llm,
+            MockSTT(error=STTError(
+                "Error code: 404 - model 'gpt-4o-mini-transcribe' does not "
+                "exist on this gateway", "transcription failed")), tts)
+        ctrl.set_log_enabled(True)
+        ctrl._turn_on()
+        ctrl.fsm.transition(AssistantState.LISTENING)
+        ctrl._start_recording()
+        loud = np.ones(1600, dtype=np.float32) * 0.3
+        for _ in range(20):
+            ctrl._recorder_feed(loud)
+        for _ in range(80):
+            if not ctrl._recorder_feed(np.zeros(1600, dtype=np.float32)):
+                break
+        ctrl._finish_utterance()
+        lines = "\n".join(ctrl.log_lines())
+        assert "404" in lines  # raw provider detail reached the log
+        assert "stt: FAILED" in lines
+        ctrl.shutdown()
+
+    def test_stt_routes_via_gateway_uses_llm_key(self, settings, contexts,
+                                                 conversations, monkeypatch):
+        # user only has a 9Router key: with ai.stt_base_url set, STT must
+        # reconfigure with the LLM key + gateway base_url instead of the
+        # (empty) OpenAI key
+        from hakuze_pngtuber.providers.stt.openai_stt import OpenAISTT
+
+        class Creds:
+            def __init__(self):
+                self.values = {"llm_api_key": "sk-ROUTER",
+                               "openai_api_key": None}
+
+            def get(self, k):
+                return self.values.get(k)
+
+        stt = OpenAISTT(api_key=None, model="gpt-4o-mini-transcribe")
+        tts = TTSEngine(MockTTS())
+        llm = LLMEngine(MockLLM(["Oke!"]), contexts,
+                        conversations, streaming=False)
+        ctrl = AssistantController(
+            settings, contexts, conversations, llm, stt, tts,
+            credentials=Creds())
+        settings.set("ai.stt_base_url", "https://api.ate.my.id/v1")
+        ctrl._turn_on()   # _refresh_providers runs synchronously
+        assert stt._api_key == "sk-ROUTER"
+        assert stt._base_url == "https://api.ate.my.id/v1"
+        ctrl.shutdown()
+
     def test_clear_history_current_context(self, settings, contexts,
                                            conversations):
         ctrl = self._make(settings, contexts, conversations)

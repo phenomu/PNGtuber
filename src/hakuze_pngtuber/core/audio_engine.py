@@ -38,15 +38,33 @@ class AudioEngineError(Exception):
 class AudioEngine:
     """Owns the input stream and a thread-safe level queue."""
 
+    def set_tap(self, tap) -> None:
+        """Attach/detach a raw-block tap callback for the assistant (opt-in).
+
+        `tap(block)` is called with the raw 20 ms input block (float32
+        mono). The tap itself must stay cheap (queue put only) — no
+        processing happens in the callback. PortAudio reuses the buffer,
+        so the callee must copy if it retains it.
+        """
+        with self._lock:
+            self._tap = tap
+
     def __level_callback(self, indata, frames, time_info, status):
         level = block_rms(indata)
         try:
             self._q.put_nowait((level, time.monotonic() * 1000.0))
         except queue.Full:
             pass  # GUI is slow; drop the oldest-style policy: keep latest below
+        tap = self._tap
+        if tap is not None:
+            try:
+                tap(indata)
+            except Exception:  # noqa: BLE001 - tap must never break audio
+                pass
 
     def __init__(self, device_index: int | None = None, paused: bool = False):
         self._stream = None
+        self._tap = None  # optional raw-block tap for the assistant
         self._q: queue.Queue = queue.Queue(maxsize=64)
         self._lock = threading.Lock()
         self.device_index = device_index

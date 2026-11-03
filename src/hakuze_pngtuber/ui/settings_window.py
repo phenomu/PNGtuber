@@ -486,8 +486,8 @@ class SettingsWindow(QMainWindow):
                     self.ai_tab.show_test_result(
                         event.get("what", "?"), bool(event.get("ok")),
                         str(event.get("message", "")))
-            elif kind in ("bubble_show", "bubble_delta", "bubble_done",
-                          "bubble_cancel"):
+            elif kind in ("bubble_thinking", "bubble_show", "bubble_delta",
+                          "bubble_done", "bubble_cancel"):
                 self._assistant_bubble_event(kind, event)
 
     def _assistant_bubble_event(self, kind: str, event: dict) -> None:
@@ -501,7 +501,9 @@ class SettingsWindow(QMainWindow):
         if not show and kind != "bubble_cancel":
             return
         bubble = self._overlay.ensure_bubble()
-        if kind == "bubble_show":
+        if kind == "bubble_thinking":
+            bubble.show_thinking()
+        elif kind == "bubble_show":
             bubble.show_text("")
         elif kind == "bubble_delta":
             bubble.append_delta(str(event.get("text", "")))

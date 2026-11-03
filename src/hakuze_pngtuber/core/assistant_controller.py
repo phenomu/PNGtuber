@@ -617,13 +617,32 @@ class AssistantController:
             self._cfg.output_mode in ("text", "both")
             or (self._cfg.output_mode == "voice"
                 and self._cfg.bubble_voice_mode))
+        # thinking indicator: cloud bubble "sedang berpikir..." while the
+        # LLM works; the answer bubble replaces it on the FIRST streamed
+        # delta (an empty bubble at thinking time drew a stray accent bar)
         if show_bubble:
-            self.emit("bubble_show")
+            self.emit("bubble_thinking")
+        voice_mode = self._cfg.output_mode in ("voice", "both")
+        # streaming voice: sentences are spoken AS THEY STREAM so the
+        # voice starts while the bubble still types (the old flow waited
+        # for the full response, so speech always arrived after the text)
+        stream_voice = voice_mode and self._cfg.llm_streaming
+        self._tts_buffer = ""
+
+        def _on_delta(delta: str) -> None:
+            if not delta:
+                return
+            if show_bubble:
+                self.emit("bubble_delta", text=delta)
+            if stream_voice:
+                self._tts_buffer += delta
+                self._tts.flush_stream_sentences(
+                    self._cfg.tts_voice or None, self._cfg.tts_speed)
+
         try:
             text = self._llm.respond(
                 question,
-                on_delta=(lambda delta: self.emit("bubble_delta", text=delta)
-                          if show_bubble else None),
+                on_delta=_on_delta if show_bubble or stream_voice else None,
                 cancel_event=self._cancel_turn)
         except LLMCancelled:
             self.emit("bubble_cancel")
@@ -641,10 +660,31 @@ class AssistantController:
         self.fsm.transition(AssistantState.RESPONDING)
         if show_bubble:
             self.emit("bubble_done", text=text)
-        if self._cfg.output_mode in ("voice", "both"):
+        if stream_voice:
+            # flush the trailing partial sentence, then wait for the
+            # queue to drain (synthesis + playback per sentence)
+            self._tts.flush_stream_final(self._cfg.tts_voice or None,
+                                         self._cfg.tts_speed)
+            self._await_tts_done()
+        elif voice_mode:
             self._speak_response(text)
         else:
             self.fsm.transition(AssistantState.IDLE)
+
+    def _await_tts_done(self) -> None:
+        """SPEAKING until every queued sentence finished playing."""
+        self.fsm.transition(AssistantState.SPEAKING)
+        self.emit("status", message="speaking...")
+        deadline = time.monotonic() + 300.0
+        while (self._tts.is_speaking_or_pending()
+               and not self._shutdown.is_set()
+               and not self._cancel_turn.is_set()
+               and time.monotonic() < deadline):
+            time.sleep(0.05)
+        if self._cancel_turn.is_set():
+            self._tts.stop()
+        self.fsm.transition(AssistantState.IDLE)
+        self.emit("speech_done")
 
     def _speak_response(self, text: str) -> None:
         self.fsm.transition(AssistantState.SPEAKING)

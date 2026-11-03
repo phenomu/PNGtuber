@@ -524,6 +524,39 @@ class TestTTSEngine:
         time.sleep(0.4)
         assert not tts.is_speaking_or_hangover()
 
+    def test_stream_sentences_spoken_in_order(self):
+        # sentence-chunked streaming: complete sentences enqueue while the
+        # rest still streams; the final flush drains everything
+        tts = TTSEngine(MockTTS())
+        tts._buffer = "Halo! Aku Hakuze. "
+        tts.flush_stream_sentences(None, 1.0)
+        # the worker may already have picked an item up - count via
+        # queue backlog + worker activity, not raw qsize
+        time.sleep(0.3)
+        tts.flush_stream_final(None, 1.0)
+        # worker drains; eventually nothing pending
+        deadline = time.monotonic() + 5.0
+        while tts.is_speaking_or_pending() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not tts.is_speaking_or_pending()
+
+    def test_stream_stop_cancels(self):
+        tts = TTSEngine(MockTTS())
+        tts.flush_stream_sentences(None, 1.0)
+        tts._sentence_q.put("Kalimat panjang sekali. " * 3)
+        tts.flush_stream_final(None, 1.0)
+        tts.stop()
+        time.sleep(0.2)
+        assert not tts.is_speaking()
+        assert not tts.is_speaking_or_pending()
+
+    def test_sentence_end_helper(self):
+        from hakuze_pngtuber.core.tts_engine import _sentence_end
+        assert _sentence_end("Halo!") == 5
+        assert _sentence_end("Halo! Apa kabar?") == 6
+        assert _sentence_end("belum selesai") == 0
+        assert _sentence_end("baris pertama\nkedua") == 14  # incl. newline
+
 
 # ---------------------------------------------------------------- hotkey
 class TestHotkeyManager:

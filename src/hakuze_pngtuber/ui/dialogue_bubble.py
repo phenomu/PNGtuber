@@ -67,6 +67,8 @@ class DialogueBubble(QWidget):
         self._fade = 0.0                 # 0..1 paint alpha multiplier
         self._persistent = display_duration_s <= 0
         self._display_s = float(display_duration_s)
+        self._thinking = False
+        self._think_dots = 0
 
         self.setBubbleStyle(width=width, max_lines=max_lines,
                             font_size=font_size, typewriter_ms=typewriter_ms,
@@ -74,6 +76,8 @@ class DialogueBubble(QWidget):
 
         self._typewriter = QTimer(self)
         self._typewriter.timeout.connect(self._tick_reveal)
+        self._think_timer = QTimer(self)
+        self._think_timer.timeout.connect(self._tick_think)
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self.begin_hide)
@@ -130,34 +134,107 @@ class DialogueBubble(QWidget):
         else:
             self._start_hide_timer()
 
+    def show_thinking(self) -> None:
+        """Cloud-style 'sedang berpikir...' indicator while the LLM runs.
+
+        Replaced by the real bubble on the first streamed delta."""
+        self._full_text = ""
+        self._revealed = 0
+        self._thinking = True
+        self._visible_state = True
+        self._fade = 1.0
+        self._layout()
+        self.show()
+        self.raise_()
+        self._hide_timer.stop()
+        self._typewriter.stop()
+        self._think_timer.start(450)   # animate the dots
+
+    def _tick_think(self) -> None:
+        self._think_dots = (self._think_dots + 1) % 4
+        self.update()
+
+    def _paint_thinking(self, painter: QPainter, alpha: float) -> None:
+        """Cloud bubble with animated 'sedang berpikir' + dots."""
+        w, h = 230.0, 74.0
+        x = (self._width - w) / 2.0
+        y = 2.0
+        cloud = QPainterPath()
+        # main puffy body: 3 arcs unioned
+        for cx, cy, r in ((x + 52, y + 38, 34),
+                          (x + 108, y + 30, 40),
+                          (x + 168, y + 40, 32)):
+            cloud.addEllipse(QPointF(cx, cy), r, r)
+        # flat-ish bottom edge
+        bottom = QRectF(x + 20, y + 44, w - 40, 26)
+        cloud.addRoundedRect(bottom, 22, 22)
+        # small tail puff toward the character
+        cloud.addEllipse(QPointF(x + w / 2 + 6, y + h + 2), 7, 7)
+        cloud.addEllipse(QPointF(x + w / 2 - 8, y + h + 12), 5, 5)
+
+        body = QColor(20, 26, 42, int(215 * self._bg_opacity * self._fade))
+        border = QColor(33, 230, 255, int(235 * alpha))
+        painter.setPen(QPen(border, 2))
+        painter.setBrush(body)
+        painter.drawPath(cloud.simplified())
+        # text + animated dots
+        text = "sedang berpikir" + "." * self._think_dots
+        painter.setFont(self.font())
+        painter.setPen(QColor(215, 246, 255, int(255 * alpha)))
+        painter.drawText(QPointF(x + 34, y + 42), text)
+
+    def _stop_thinking(self) -> None:
+        self._think_timer.stop()
+        self._thinking = False
+        self._think_dots = 0
+
     def append_delta(self, delta: str) -> None:
         """Streaming: append text; reveal catches up."""
         if not delta:
             return
-        self._full_text += delta
+        if self._thinking:
+            self._stop_thinking()   # first delta: replace the indicator
         if not self._visible_state:
             self.show_text()
+            return
+        self._full_text += delta
         if self._typewriter_ms <= 0:
             self._revealed = len(self._full_text)
             self._layout()
             self.update()
+            return
+        if not self._typewriter.isActive() and \
+                self._revealed < len(self._full_text):
+            self._typewriter.start(self._typewriter_ms)
         self._layout()
         self.update()
 
     def complete_text(self, text: str | None = None) -> None:
-        """Response finished: reveal everything, schedule hide."""
+        """Response finished: keep the typewriter reveal going (it catches
+        up), schedule hide AFTER the reveal completes."""
         if text is not None:
             self._full_text = text
-        self._revealed = len(self._full_text)
-        self._typewriter.stop()
-        self._layout()
+        if self._thinking:
+            self._stop_thinking()
         self._visible_state = True
         if not self.isVisible():
             self._fade = 1.0
             self.show()
+        if self._typewriter_ms <= 0:
+            self._revealed = len(self._full_text)
+            self._layout()
+            self._start_hide_timer()
+        elif self._revealed >= len(self._full_text):
+            # already fully revealed -> hide timer directly
+            self._typewriter.stop()
+            self._start_hide_timer()
+        else:
+            # still typing: _tick_reveal schedules the hide at the end
+            if not self._typewriter.isActive():
+                self._typewriter.start(self._typewriter_ms)
         self.update()
-        self._start_hide_timer()
-        self.fully_revealed.emit()
+        if self._revealed >= len(self._full_text):
+            self.fully_revealed.emit()
 
     def _start_hide_timer(self) -> None:
         self._typewriter.stop()
@@ -169,12 +246,14 @@ class DialogueBubble(QWidget):
     def begin_hide(self) -> None:
         self._hide_timer.stop()
         self._typewriter.stop()
+        self._stop_thinking()
         self._fade_timer.start(30)
 
     def hide_immediately(self) -> None:
         self._typewriter.stop()
         self._hide_timer.stop()
         self._fade_timer.stop()
+        self._stop_thinking()
         self._visible_state = False
         self._fade = 0.0
         self.hide()
@@ -231,6 +310,10 @@ class DialogueBubble(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         alpha = self._opacity * self._fade
+
+        if self._thinking:
+            self._paint_thinking(painter, alpha)
+            return
 
         # bubble body
         rect = QRectF(1.0, 1.0, float(self._width - 2), float(self._height - 16))

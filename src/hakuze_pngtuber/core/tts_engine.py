@@ -122,7 +122,12 @@ class PlaybackStream:
 
 
 class TTSEngine:
-    """Synthesize (provider) + play (PlaybackStream) with cancel support."""
+    """Synthesize (provider) + play (PlaybackStream) with cancel support.
+
+    Streaming mode: `flush_stream_sentences` feeds the growing response
+    text; each COMPLETE sentence is synthesized on a dedicated queue
+    thread and played IN ORDER, so the voice starts while the text is
+    still streaming/typing instead of after everything finished."""
 
     def __init__(self, provider: BaseTTSProvider, volume: float = 1.0,
                  device_index: int | None = None):
@@ -136,6 +141,85 @@ class TTSEngine:
         self._hangover_until_ms: float | None = None
         self.on_playback_done = None  # callable(cancelled: bool)
         self.on_speaking_changed = None  # callable(bool)
+        # streaming sentence queue
+        self._sentence_q: "queue.Queue[str | None]" = queue.Queue()
+        self._stream_thread: threading.Thread | None = None
+        self._stream_done = threading.Event()
+        self._buffer = ""
+        self._speaking_state = threading.Event()
+
+    # ------------------------------------------------- streaming pipeline
+    _SENTENCE_ENDS = ".!?\n"
+
+    def _start_stream_thread(self, voice, speed) -> None:
+        if self._stream_thread is not None and \
+                self._stream_thread.is_alive():
+            return
+
+        def _worker():
+            while True:
+                item = self._sentence_q.get()
+                if item is None:
+                    self._sentence_q.task_done()
+                    break
+                self._speaking_state.set()
+                try:
+                    wav = self.provider.synthesize(
+                        TTSRequest(text=item, voice=voice, speed=speed,
+                                   cancel_event=self._cancel))
+                    self.play_wav(wav)
+                except TTSError:
+                    pass  # skip failed sentence; keep the stream alive
+                finally:
+                    self._sentence_q.task_done()
+            self._speaking_state.clear()
+
+        self._stream_thread = threading.Thread(
+            target=_worker, name="hakuze-tts-stream", daemon=True)
+        self._stream_thread.start()
+
+    def flush_stream_sentences(self, voice: str | None = None,
+                               speed: float = 1.0) -> None:
+        """Feed streamed text; enqueue every COMPLETE sentence."""
+        self._start_stream_thread(voice, speed)
+        while True:
+            cut = _sentence_end(self._buffer)
+            if cut <= 0:
+                break
+            sentence = self._buffer[:cut].strip()
+            self._buffer = self._buffer[cut:]
+            if sentence:
+                self._sentence_q.put(sentence)
+
+    def flush_stream_final(self, voice: str | None = None,
+                           speed: float = 1.0) -> None:
+        """Stream ended: flush the trailing partial as the last sentence."""
+        self.flush_stream_sentences(voice, speed)
+        rest = self._buffer.strip()
+        self._buffer = ""
+        if rest:
+            self._sentence_q.put(rest)
+        self._sentence_q.put(None)   # sentinel: stream finished
+        self._stream_done.set()
+
+    def is_speaking_or_pending(self) -> bool:
+        """True while sentences remain queued, synthesizing, or playing."""
+        with self._lock:
+            playing = self.is_speaking_locked()
+        pending = not self._sentence_q.empty() or self._speaking_state.is_set()
+        worker_alive = self._stream_thread is not None \
+            and self._stream_thread.is_alive()
+        return playing or (pending and worker_alive)
+
+    def _reset_stream(self) -> None:
+        self._buffer = ""
+        # drain any leftover queue without processing
+        try:
+            while True:
+                self._sentence_q.get_nowait()
+        except queue.Empty:
+            pass
+        self._stream_done.clear()
 
     # ---------------------------------------------------------------- state
     def is_speaking(self) -> bool:
@@ -206,6 +290,7 @@ class TTSEngine:
     def stop(self) -> None:
         """Cancel current playback immediately (user interrupt / END)."""
         self._cancel.set()
+        self._reset_stream()
         with self._lock:
             current = self._current
         if current is not None:
@@ -223,3 +308,16 @@ class TTSEngine:
         if _sd is None:
             return False, f"audio backend unavailable: {_SD_ERROR}"
         return True, "sounddevice playback ok"
+
+
+def _sentence_end(text: str) -> int:
+    """Index just past the first sentence terminator (0 = none yet)."""
+    for i, ch in enumerate(text):
+        if ch in ".!?":
+            j = i + 1
+            while j < len(text) and text[j] in " \u201d'\")\n":
+                j += 1
+            return j
+    if "\n" in text:
+        return text.index("\n") + 1
+    return 0

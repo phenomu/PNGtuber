@@ -91,6 +91,21 @@ def main() -> int:
           f"count={tab.context_widget.lst.count()}")
     check("state label starts OFF", tab.state_label.text() == "STATE: OFF")
 
+    # --- logs toggle applies IMMEDIATELY to the controller ---------------
+    tab.tg_logs.set_checked(True)
+    check("log toggle enables controller capture",
+          assistant.log_enabled is True)
+    tab.tg_logs.set_checked(False)
+    check("log toggle disables controller capture",
+          assistant.log_enabled is False)
+
+    # --- mic gain slider present + meter wired ----------------------------
+    check("mic gain slider present", hasattr(tab, "sl_mic_gain"))
+    check("wake meter present", hasattr(tab, "wake_meter"))
+    rms, thr, on = assistant.input_level()
+    check("input_level reports OFF state", (rms, on) == (None, False),
+          f"rms={rms} on={on}")
+
     # assistant on -> state label updates through poll
     assistant.set_on()
     for _ in range(50):

@@ -46,6 +46,7 @@
         "wake_mode": "energy",
         "wake_phrase": "Hai GPT",
         "wake_sensitivity": 0.5,
+        "mic_gain": 1.0,
         "hotkey": "END",
         "start_on_startup": false,
         "output_mode": "text",

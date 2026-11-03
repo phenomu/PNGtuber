@@ -19,9 +19,12 @@ class AssistantSettings:
     wake_mode: str = "energy"
     wake_phrase: str = "Hai GPT"
     wake_sensitivity: float = 0.5
+    mic_gain: float = 1.0           # input amplification for the assistant
     hotkey: str = "END"
     start_on_startup: bool = False
     output_mode: str = "text"
+    # logging
+    log_enabled: bool = False
     # llm (9Router)
     llm_base_url: str = "https://api.ate.my.id/v1"
     llm_model: str = ""
@@ -88,10 +91,12 @@ class AssistantSettings:
         out.wake_mode = mode if mode in _VALID_WAKE_MODES else "energy"
         out.wake_phrase = gs("wake_phrase", "Hai GPT", 120).strip() or "Hai GPT"
         out.wake_sensitivity = gf("wake_sensitivity", 0.5, 0.05, 1.0)
+        out.mic_gain = gf("mic_gain", 1.0, 0.25, 8.0)
         out.hotkey = gs("hotkey", "END", 24).strip().upper() or "END"
         out.start_on_startup = gb("start_on_startup", False)
         mode = gs("output_mode", "text", 16)
         out.output_mode = mode if mode in _VALID_OUTPUT_MODES else "text"
+        out.log_enabled = gb("log_enabled", False)
         out.llm_base_url = gs("llm_base_url",
                               "https://api.ate.my.id/v1", 300).strip()
         out.llm_model = gs("llm_model", "", 200).strip()

@@ -71,6 +71,10 @@ class AssistantController:
         # the user enables logging — never persisted, never sent anywhere
         self._log_lines: deque = deque(maxlen=200)
         self.log_enabled = False
+        self._last_level_log_ms: float | None = None
+        # live input level for the UI wake meter (updated per block)
+        self._last_rms = 0.0
+        self._last_rms_ms: float | None = None
 
         self._cfg = AssistantSettings.from_settings(settings)
 
@@ -144,6 +148,15 @@ class AssistantController:
     @property
     def is_on(self) -> bool:
         return self.fsm.is_on()
+
+    def input_level(self) -> tuple[float | None, float, bool]:
+        """(rms after gain, wake threshold, is_on) for the UI meter."""
+        on = self.fsm.is_on()
+        if not on or self._last_rms_ms is None:
+            return None, self._wake.energy_threshold(), on
+        fresh = (time.monotonic() * 1000.0 - self._last_rms_ms) < 1000.0
+        return (self._last_rms if fresh else None,
+                self._wake.energy_threshold(), on)
 
     def start(self) -> None:
         """Start the worker thread (idempotent)."""
@@ -263,6 +276,11 @@ class AssistantController:
         self._wake = WakeWordEngine(
             mode=self._cfg.wake_mode, phrase=self._cfg.wake_phrase,
             sensitivity=self._cfg.wake_sensitivity)
+
+        # log toggle snapshot bug (same class): the UI saves the setting,
+        # the controller must pick it up here or capture never starts
+        if self.log_enabled != self._cfg.log_enabled:
+            self.set_log_enabled(self._cfg.log_enabled)
 
     def tts_voices(self) -> list[str]:
         """Voice names from the ACTIVE provider (for the settings combo)."""
@@ -404,7 +422,28 @@ class AssistantController:
             return
         state = self.fsm.state
         tts_busy = self._tts.is_speaking_or_hangover()
+        # mic gain: amplify quiet inputs (IEM mics) BEFORE any threshold
+        # math; the recorder gets the same amplified signal via
+        # _recorder_feed, so STT receives louder, clearer audio too
+        gain = self._cfg.mic_gain
+        if gain != 1.0:
+            block = np.asarray(block, dtype=np.float32).reshape(-1) * gain
         rms = self._block_rms(block)
+        self._last_rms = rms
+        self._last_rms_ms = time.monotonic() * 1000.0
+        # level heartbeat: guaranteed log output while ON + capture on,
+        # even when nothing triggers (a silent/quiet mic shows itself
+        # here instead of an empty log panel)
+        if self.log_enabled:
+            now_ms = time.monotonic() * 1000.0
+            if self._last_level_log_ms is None \
+                    or now_ms - self._last_level_log_ms > 2000.0:
+                self._last_level_log_ms = now_ms
+                thr = self._wake.energy_threshold()
+                if rms < thr:
+                    self.append_log(
+                        f"mic: rms={rms:.4f} < wake_thr={thr:.4f} "
+                        f"gain={gain:.1f} (raise mic gain if this persists)")
 
         # --- barge-in: user speech while SPEAKING/RESPONDING ---------------
         # Elevated threshold (2.5x wake): headset users' own voice clears it
@@ -464,11 +503,6 @@ class AssistantController:
                             self.emit("status", message="listening...")
                             self._start_recording()
                             self._recorder_feed(block)
-                elif self.log_enabled and rms > threshold * 0.4:
-                    # near-miss levels help diagnose sensitivity issues
-                    self.append_log(
-                        f"wake: below threshold rms={rms:.4f} "
-                        f"< {threshold:.4f}")
 
     def _interrupt_threshold(self) -> float:
         base = self._wake.energy_threshold()

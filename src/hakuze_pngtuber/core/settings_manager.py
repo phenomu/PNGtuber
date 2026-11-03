@@ -55,6 +55,7 @@ class SettingsManager:
         "sustain_bob_period_ms": (300.0, 10000.0),
         # assistant (section "ai") — key names unique across sections
         "wake_sensitivity": (0.05, 1.0),
+        "mic_gain": (0.25, 8.0),
         "llm_temperature": (0.0, 2.0),
         "llm_max_tokens": (16.0, 4096.0),
         "llm_timeout_s": (5.0, 300.0),

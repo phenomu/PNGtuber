@@ -465,6 +465,7 @@ class SettingsWindow(QMainWindow):
             return
         if hasattr(self, "ai_tab"):
             self.ai_tab.poll_log_lines()
+            self.ai_tab.poll_wake_meter()
         for event in assistant.poll_events():
             kind = event.get("event")
             if kind == "state":

@@ -675,8 +675,9 @@ class TestAssistantController:
     def test_log_enabled_captures_pipeline(self, settings, contexts,
                                            conversations):
         ctrl = self._make(settings, contexts, conversations)
-        ctrl.set_log_enabled(True)
-        ctrl._turn_on()
+        settings.set("ai.log_enabled", True)   # what the UI toggle persists
+        ctrl._turn_on()                        # _refresh_providers picks up
+        assert ctrl.log_enabled is True        # the sync is the bug fix
         ctrl._ask_llm("halo")  # mock LLM: "Oke!"
         ctrl._turn_off()
         lines = "\n".join(ctrl.log_lines())
@@ -712,6 +713,50 @@ class TestAssistantController:
         assert len(conversations.history(active)) > 0
         ctrl.clear_history("current")
         assert conversations.history(active) == []
+        ctrl.shutdown()
+
+    def test_mic_gain_wakes_quiet_iem(self, settings, contexts, conversations):
+        # user scenario: IEM mic delivers raw rms ~0.002, far below the
+        # default wake threshold (~0.0129) -> assistant never responded.
+        # Gain 8x lifts it above threshold -> wake fires.
+        settings.set("ai.wake_mode", "energy")
+        settings.set("ai.mic_gain", 8.0)
+        ctrl = self._make(settings, contexts, conversations)
+        ctrl.start()
+        ctrl._turn_on()
+        quiet = np.ones(1600, dtype=np.float32) * 0.002
+        ctrl.feed_audio_block(quiet)
+        time.sleep(0.15)
+        assert ctrl.state is AssistantState.LISTENING
+        rms, thr, on = ctrl.input_level()
+        assert rms is not None and rms >= thr   # meter shows OK
+        ctrl.shutdown()
+
+    def test_quiet_mic_without_gain_never_wakes(self, settings, contexts,
+                                                conversations):
+        # same quiet mic, NO gain: stays IDLE (this is the bug the user hit)
+        settings.set("ai.wake_mode", "energy")
+        ctrl = self._make(settings, contexts, conversations)
+        ctrl.start()
+        ctrl._turn_on()
+        quiet = np.ones(1600, dtype=np.float32) * 0.002
+        ctrl.feed_audio_block(quiet)
+        time.sleep(0.15)
+        assert ctrl.state is AssistantState.IDLE
+        rms, thr, _ = ctrl.input_level()
+        assert rms is not None and rms < thr
+        ctrl.shutdown()
+
+    def test_mic_gain_clamped_and_applied_in_feed(self, settings, contexts,
+                                                  conversations):
+        settings.set("ai.mic_gain", 8.0)
+        ctrl = self._make(settings, contexts, conversations)
+        ctrl.start()
+        ctrl._turn_on()  # direct call: _refresh_providers ran synchronously
+        quiet = np.ones(1600, dtype=np.float32) * 0.002
+        ctrl._handle_audio(quiet)   # worker-path entry: gain applied here
+        rms, thr, _ = ctrl.input_level()
+        assert abs(rms - 0.016) < 0.001           # 0.002 * 8, no clip
         ctrl.shutdown()
 
 

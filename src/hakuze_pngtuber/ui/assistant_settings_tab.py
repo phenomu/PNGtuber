@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.context_manager import VALID_LANGUAGES, VALID_RESPONSE_LENGTHS
-from .widgets import LabeledSlider, NumberBox, ToggleRow, section
+from .widgets import LabeledSlider, LevelMeter, NumberBox, ToggleRow, section
 
 
 class SecretEdit(QWidget):
@@ -157,6 +157,28 @@ class AssistantSettingsTab(QWidget):
         self.sl_wake_sens.value_changed.connect(
             lambda v: self._save("ai.wake_sensitivity", v))
         col.addWidget(self.sl_wake_sens)
+
+        # mic boost for quiet mics (IEM): amplifies AI input only —
+        # PNGtuber mouth detection keeps its own sensitivity settings
+        self.sl_mic_gain = LabeledSlider(
+            "mic gain (AI input boost, x)", 0.25, 8.0,
+            float(settings.get("ai.mic_gain", 1.0)), decimals=2)
+        self.sl_mic_gain.setToolTip(
+            "multiplies assistant input level before wake detection; "
+            "use for quiet mics (IEM/headset) — watch the level bar below "
+            "and raise gain until the bar fills while you talk")
+        self.sl_mic_gain.value_changed.connect(
+            lambda v: self._save("ai.mic_gain", v))
+        col.addWidget(self.sl_mic_gain)
+
+        # live AI input level vs wake threshold (updated by the poll loop)
+        self.wake_meter = LevelMeter()
+        self.wake_meter.setMaximumHeight(10)
+        col.addWidget(self.wake_meter)
+        self.wake_level_label = QLabel("input: --  (enable assistant + talk)")
+        self.wake_level_label.setObjectName("subtitle")
+        self.wake_level_label.setWordWrap(True)
+        col.addWidget(self.wake_level_label)
 
         self.tg_startup = ToggleRow(
             "enable assistant on app startup",
@@ -458,8 +480,7 @@ class AssistantSettingsTab(QWidget):
         self.tg_logs = ToggleRow(
             "capture logs (session only, never saved to disk)",
             bool(settings.get("ai.log_enabled", False)))
-        self.tg_logs.toggled.connect(
-            lambda v: self._save("ai.log_enabled", v))
+        self.tg_logs.toggled.connect(self._on_log_toggle)
         self._controller.set_log_enabled(
             bool(settings.get("ai.log_enabled", False)))
         col.addWidget(self.tg_logs)
@@ -567,6 +588,40 @@ class AssistantSettingsTab(QWidget):
 
     def _preview_bubble(self) -> None:
         self.speak_test_requested.emit("bubble_preview")
+
+    def poll_wake_meter(self) -> None:
+        """Live input level vs wake threshold (from the poll loop)."""
+        rms, thr, on = self._controller.input_level()
+        gain = float(self._settings.get("ai.mic_gain", 1.0))
+        if not on:
+            self.wake_meter.set_level(0.0)
+            self.wake_level_label.setText(
+                "input: --  (assistant OFF - press END or toggle to test mic)")
+            return
+        if rms is None:
+            self.wake_meter.set_level(0.0)
+            self.wake_level_label.setText(
+                "input: no audio reaching assistant (mic muted? wrong "
+                "device? mute is in the audio tab)")
+            return
+        self.wake_meter.set_level(min(1.0, rms / thr) if thr > 0 else 0.0)
+        state = "OK - above threshold (listening)" if rms >= thr \
+            else "too quiet - raise mic gain or wake sensitivity"
+        self.wake_level_label.setText(
+            f"input: {rms:.4f}  threshold: {thr:.4f}  gain: {gain:.2f}x"
+            f"  ->  {state}")
+
+    def _on_log_toggle(self, enabled: bool) -> None:
+        """Apply immediately AND persist (settings_changed alone had the
+        same snapshot bug class: save without the controller learning)."""
+        self._settings.set("ai.log_enabled", bool(enabled))
+        self._settings.save()
+        self._controller.set_log_enabled(bool(enabled))
+        self.status_message.emit(
+            "log capture ON - talking now appears in the log" if enabled
+            else "log capture OFF")
+        if enabled:
+            self._log_cursor = self._controller.log_line_count()
 
     # ---------------------------------------------------------------- logs
     def _clear_log_view(self) -> None:

@@ -761,6 +761,39 @@ class TestAssistantController:
         assert stt._base_url == "https://api.ate.my.id/v1"
         ctrl.shutdown()
 
+    def test_stt_upload_has_wav_filename(self):
+        # live bug: the API returned 400 'Unsupported file format' because
+        # the BytesIO upload had no filename - format metadata is required
+        from hakuze_pngtuber.providers.stt.openai_stt import OpenAISTT
+        from hakuze_pngtuber.providers.stt.base import STTRequest
+
+        class FakeAudio:
+            class transcriptions:
+                @staticmethod
+                def create(**kwargs):
+                    f = kwargs["file"]
+                    assert getattr(f, "name", "").endswith(".wav"), \
+                        f"upload filename missing: {getattr(f, 'name', None)!r}"
+                    text = type("T", (), {"text": "halo"})()
+                    return text
+
+        class FakeClient:
+            audio = FakeAudio()
+
+        stt = OpenAISTT(
+            api_key="x", model="gpt-transcribe",
+            client_factory=lambda api_key, base_url: FakeClient())
+        import io
+        import wave
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(b"\x00\x00" * 1600)
+        out = stt.transcribe(STTRequest(audio=buf.getvalue()))
+        assert out == "halo"
+
     def test_clear_history_current_context(self, settings, contexts,
                                            conversations):
         ctrl = self._make(settings, contexts, conversations)

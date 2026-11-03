@@ -18,6 +18,7 @@ _ERR_MAP = {
     "429": "rate limit reached",
     "timeout": "transcription timed out",
     "insufficient_quota": "billing quota exhausted",
+    "unsupported file format": "audio upload rejected (file format metadata)",
 }
 
 
@@ -82,6 +83,8 @@ class OpenAISTT(BaseSTTProvider):
         if request.prompt:
             kwargs["prompt"] = request.prompt
         try:
+            wav.name = "utterance.wav"  # API needs format metadata (400
+            # 'Unsupported file format' when the upload has no filename)
             transcript = client.audio.transcriptions.create(**kwargs)
         except Exception as exc:  # noqa: BLE001 - translated
             raise self._translate(exc) from exc
@@ -133,6 +136,7 @@ class OpenAISTT(BaseSTTProvider):
                 w.setframerate(16000)
                 w.writeframes(b"\x00\x00" * 1600)
             buf.seek(0)
+            buf.name = "silence.wav"  # format metadata required by the API
             try:
                 client.audio.transcriptions.create(
                     model=self._model, file=buf)

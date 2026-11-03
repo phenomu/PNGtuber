@@ -646,6 +646,23 @@ class TestAssistantController:
         assert ctrl._cfg.llm_temperature == pytest.approx(0.1)
         ctrl.shutdown()
 
+    def test_wake_phrase_hot_reload(self, settings, contexts, conversations):
+        # user bug: changing 'Hai GPT' -> 'halo' while ON was ignored because
+        # the wake engine kept its startup snapshot
+        settings.set("ai.wake_mode", "phrase-verify")
+        ctrl = self._make(settings, contexts, conversations)
+        ctrl.start()
+        ctrl._turn_on()
+        settings.set("ai.wake_phrase", "halo")
+        settings.set("ai.wake_mode", "phrase-verify")
+        ctrl.settings_changed()
+        time.sleep(0.05)
+        assert ctrl._wake.phrase == "halo"
+        assert ctrl._wake.mode == "phrase-verify"
+        assert ctrl._wake.phrase_matches("halo, apa kabar?")
+        assert not ctrl._wake.phrase_matches("selamat pagi semuanya")
+        ctrl.shutdown()
+
 
 # ---------------------------------------------------------------- hot reload
 class TestProviderHotReconfigure:

@@ -105,11 +105,23 @@ def main() -> int:
     anim = AnimationEngine()
     overlay = AvatarOverlay(assets, anim, settings)
     overlay.show()  # bubble visibility requires a visible parent
+    # park low enough that upward bubble growth never hits the clamp;
+    # persist it so _relayout's restore path agrees with the smoke values
+    settings.set("avatar.pos_x", 120)
+    settings.set("avatar.pos_y", 400)
+    overlay.move(120, 400)
+    app.processEvents()
     base_h = overlay.height()
+    base_bottom = overlay.y() + overlay.height()  # avatar anchor
+    base_pos = (overlay.x(), overlay.y())
     bubble = overlay.ensure_bubble()
     check("bubble created as overlay child", bubble.parent() is overlay)
     check("overlay grew for bubble", overlay.height() > base_h,
           f"{base_h} -> {overlay.height()}")
+    # grow must be UPWARD: window bottom (avatar feet) stays put
+    check("window bottom fixed while bubble shown",
+          overlay.y() + overlay.height() == base_bottom,
+          f"top={overlay.y()} h={overlay.height()}")
 
     bubble.setBubbleStyle(typewriter_ms=0, max_lines=3)
     bubble.show_text("Halo! Aku Hakuze ~ hehe 🎮 unicode ✓ émoji test")
@@ -139,6 +151,12 @@ def main() -> int:
         app.processEvents()
     check("overlay shrinks after hide", overlay.height() == base_h,
           f"{overlay.height()} vs {base_h}")
+    check("avatar never moved (bottom restored)",
+          overlay.y() + overlay.height() == base_bottom,
+          f"top={overlay.y()} h={overlay.height()}")
+    check("window back at exact user position",
+          (overlay.x(), overlay.y()) == base_pos,
+          f"{(overlay.x(), overlay.y())} vs {base_pos}")
 
     # --- assistant event -> bubble bridge -------------------------------
     assistant._turn_on()

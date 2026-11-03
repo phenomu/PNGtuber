@@ -208,6 +208,12 @@ class AssistantController:
             timeout_s=self._cfg.llm_timeout_s,
             streaming=self._cfg.llm_streaming)
 
+        # wake engine snapshot bug: phrase/mode/sensitivity changed in the
+        # UI must apply while ON (same class as the provider snapshot bug)
+        self._wake = WakeWordEngine(
+            mode=self._cfg.wake_mode, phrase=self._cfg.wake_phrase,
+            sensitivity=self._cfg.wake_sensitivity)
+
     def tts_voices(self) -> list[str]:
         """Voice names from the ACTIVE provider (for the settings combo)."""
         try:

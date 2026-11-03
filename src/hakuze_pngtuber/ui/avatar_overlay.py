@@ -96,10 +96,20 @@ class AvatarOverlay(QWidget):
         self._idle_scaled = scale_contain_pixmap(self._idle_gray_pm, self._disp_w, self._disp_h)
         self._talk_scaled = scale_contain_pixmap(self._talk_pm, self._disp_w, self._disp_h)
         bubble_extra = self._bubble_height if self._bubble is not None else 0
-        self.setFixedSize(self._disp_w + 80, self._disp_h + 120 + bubble_extra)
+        new_w = self._disp_w + 80
+        new_h = self._disp_h + 120 + bubble_extra
         pos_x = int(self._settings.get("avatar.pos_x", 120))
         pos_y = int(self._settings.get("avatar.pos_y", 120))
-        self.move(pos_x, pos_y)
+        if bubble_extra > 0 and self.isVisible():
+            # bubble shown: grow/shrink UPWARD so the bottom-anchored
+            # avatar never moves while text appears above it
+            bottom = self.y() + self.height()
+            self.setFixedSize(new_w, new_h)
+            self.move(pos_x, bottom - new_h)
+        else:
+            # no bubble: window is exactly the user-set position
+            self.setFixedSize(new_w, new_h)
+            self.move(pos_x, pos_y)
         self._clamp_to_screen()
 
     def _apply_window_flags(self) -> None:
@@ -198,8 +208,13 @@ class AvatarOverlay(QWidget):
     position_saved = Signal()
 
     def save_position(self) -> None:
+        # store the equivalent NO-BUBBLE window top: bubble growth is
+        # upward-only and transient, so anchoring the saved position to
+        # the base height keeps drag results stable across bubble show/hide
+        base_h = self._disp_h + 120
         self._settings.set("avatar.pos_x", self.x())
-        self._settings.set("avatar.pos_y", self.y())
+        self._settings.set("avatar.pos_y",
+                           self.y() + self.height() - base_h)
 
     def stop(self) -> None:
         self._timer.stop()

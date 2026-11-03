@@ -79,7 +79,7 @@ class SettingsManager:
         # assistant booleans (also valid in other sections if ever added)
         "ai_enabled", "start_on_startup", "llm_streaming", "interrupt_allow",
         "bubble_enabled", "bubble_voice_mode", "history_persistent",
-        "history_clear_on_exit", "persona_emoji", "use_emoji",
+        "history_clear_on_exit", "log_enabled", "persona_emoji", "use_emoji",
     }
 
     _INTEGERS = {"pos_x", "pos_y", "attack_ms", "release_ms", "min_speech_ms", "silence_ms",

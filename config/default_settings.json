@@ -76,6 +76,7 @@
         "bubble_animation_ms": 220,
         "bubble_opacity": 0.88,
         "bubble_voice_mode": false,
+        "log_enabled": false,
         "history_max_turns": 12,
         "history_persistent": false,
         "history_clear_on_exit": false,

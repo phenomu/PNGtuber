@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -94,6 +95,7 @@ class AssistantSettingsTab(QWidget):
         super().__init__(parent)
         self._settings = settings
         self._controller = controller
+        self._log_cursor = 0  # log lines already shown in the view
         self._contexts = contexts
         self._creds = credentials
         self._pending_keys: dict[str, str] = {}
@@ -451,7 +453,43 @@ class AssistantSettingsTab(QWidget):
         col.addWidget(self.btn_bubble_preview)
         root.addWidget(panel)
 
-        # ---------------- H. conversation ----------------
+        # ---------------- H. logs (what you said, session-only) ------------
+        panel, col = section("logs")
+        self.tg_logs = ToggleRow(
+            "capture logs (session only, never saved to disk)",
+            bool(settings.get("ai.log_enabled", False)))
+        self.tg_logs.toggled.connect(
+            lambda v: self._save("ai.log_enabled", v))
+        self._controller.set_log_enabled(
+            bool(settings.get("ai.log_enabled", False)))
+        col.addWidget(self.tg_logs)
+        self.txt_logs = QPlainTextEdit()
+        self.txt_logs.setReadOnly(True)
+        self.txt_logs.setMaximumHeight(220)
+        self.txt_logs.setPlaceholderText(
+            "Enable capture, then talk to the assistant. Every pipeline "
+            "stage appears here: wake trigger levels, what was heard "
+            "(STT transcript), phrase matching, LLM/TTS results and errors.")
+        self.txt_logs.setStyleSheet(
+            "font-family: Consolas, monospace; font-size: 12px;")
+        col.addWidget(self.txt_logs)
+        row = QHBoxLayout()
+        self.btn_log_clear = QPushButton("clear log view")
+        self.btn_log_clear.setObjectName("flat")
+        self.btn_log_clear.clicked.connect(self._clear_log_view)
+        row.addWidget(self.btn_log_clear)
+        self.btn_log_ctx_history = QPushButton("clear current context history")
+        self.btn_log_ctx_history.setObjectName("flat")
+        self.btn_log_ctx_history.clicked.connect(self._clear_ctx_history)
+        row.addWidget(self.btn_log_ctx_history)
+        self.btn_log_all_history = QPushButton("clear all history")
+        self.btn_log_all_history.setObjectName("flat")
+        self.btn_log_all_history.clicked.connect(self._clear_all_history)
+        row.addWidget(self.btn_log_all_history)
+        col.addLayout(row)
+        root.addWidget(panel)
+
+        # ---------------- I. conversation ----------------
         panel, col = section("conversation")
         self.sl_hist = LabeledSlider(
             "history limit (turns)", 2, 50, float(settings.get("ai.history_max_turns", 12)),
@@ -529,6 +567,41 @@ class AssistantSettingsTab(QWidget):
 
     def _preview_bubble(self) -> None:
         self.speak_test_requested.emit("bubble_preview")
+
+    # ---------------------------------------------------------------- logs
+    def _clear_log_view(self) -> None:
+        self._controller.clear_log()
+        self.txt_logs.clear()
+
+    def _clear_ctx_history(self) -> None:
+        btn = QMessageBox.question(
+            self, "Clear history",
+            "Clear CURRENT context conversation history?\n"
+            "(also clears the log view)")
+        if btn == QMessageBox.Yes:
+            self._controller.clear_history("current")
+            self._clear_log_view()
+
+    def _clear_all_history(self) -> None:
+        btn = QMessageBox.question(
+            self, "Clear history", "Clear ALL conversation history?\n"
+            "(also clears the log view)")
+        if btn == QMessageBox.Yes:
+            self._controller.clear_history(None)
+            self._clear_log_view()
+
+    def poll_log_lines(self) -> None:
+        """Called from the settings window poll: append new controller
+        log lines to the view (only when capture is enabled)."""
+        if not self._controller.log_enabled:
+            return
+        lines = self._controller.poll_log_lines(
+            after=self._log_cursor)
+        if lines:
+            self.txt_logs.appendPlainText("\n".join(lines))
+            sb = self.txt_logs.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        self._log_cursor = self._controller.log_line_count()
 
     # ------------------------------------------------------------------
     def set_assistant_state(self, state: str) -> None:

@@ -96,18 +96,37 @@ class AvatarOverlay(QWidget):
         self._idle_scaled = scale_contain_pixmap(self._idle_gray_pm, self._disp_w, self._disp_h)
         self._talk_scaled = scale_contain_pixmap(self._talk_pm, self._disp_w, self._disp_h)
         bubble_extra = self._bubble_height if self._bubble is not None else 0
-        new_w = self._disp_w + 80
+        base_w = self._disp_w + 80
+        # the bubble (child widget) is CLIPPED to the window: it must fit
+        # horizontally or its text gets cut at both edges
+        bubble_w = getattr(self._bubble, "_width", 0) + 40 \
+            if self._bubble is not None else 0
+        new_w = max(base_w, bubble_w)
         new_h = self._disp_h + 120 + bubble_extra
         pos_x = int(self._settings.get("avatar.pos_x", 120))
         pos_y = int(self._settings.get("avatar.pos_y", 120))
-        if bubble_extra > 0 and self.isVisible():
-            # bubble shown: grow/shrink UPWARD so the bottom-anchored
-            # avatar never moves while text appears above it
+        if self.isVisible():
+            # preserve the window CENTER (horizontal) and BOTTOM (vertical):
+            # the avatar is painted centered + bottom-anchored, so keeping
+            # center+bottom fixed means the character NEVER moves while the
+            # window grows for the bubble or shrinks back afterwards.
+            center_x = self.x() + self.width() / 2.0
             bottom = self.y() + self.height()
-            self.setFixedSize(new_w, new_h)
-            self.move(pos_x, bottom - new_h)
+            if bubble_extra == 0:
+                # returning to base size: land on the EXACT saved position
+                # (center math can drift 1-2 px on odd widths)
+                base_center = pos_x + base_w / 2.0
+                self.setFixedSize(new_w, new_h)
+                self.move(pos_x, bottom - new_h)
+                if abs((self.x() + self.width() / 2.0) - base_center) <= 1 \
+                        and self.width() == base_w:
+                    pass  # exact
+                else:
+                    self.move(pos_x, bottom - new_h)
+            else:
+                self.setFixedSize(new_w, new_h)
+                self.move(round(center_x - new_w / 2.0), bottom - new_h)
         else:
-            # no bubble: window is exactly the user-set position
             self.setFixedSize(new_w, new_h)
             self.move(pos_x, pos_y)
         self._clamp_to_screen()
@@ -222,7 +241,12 @@ class AvatarOverlay(QWidget):
 
     # --- assistant dialogue bubble ----------------------------------------
     def ensure_bubble(self) -> "DialogueBubble":
-        """Create/return the dialogue bubble child (lazily)."""
+        """Create/return the dialogue bubble child (lazily).
+
+        Also re-applies the grown window geometry whenever the bubble is
+        about to show again after a hide: the window shrinks back to the
+        base size on hide, and a re-show MUST grow it again or the bubble
+        is drawn over the avatar's face (user bug)."""
         from .dialogue_bubble import DialogueBubble
         if self._bubble is None:
             cfg = {
@@ -235,6 +259,9 @@ class AvatarOverlay(QWidget):
             }
             self._bubble = DialogueBubble(self, **cfg)
             self._bubble.hidden.connect(self._on_bubble_hidden)
+        if self._bubble_height == 0:
+            # re-grow the window for this (re)show — bubble goes above the
+            # head, never over the face
             self._bubble_height = self._bubble.height() + 4
             self._relayout()
         return self._bubble
@@ -260,17 +287,16 @@ class AvatarOverlay(QWidget):
         # keep window stable-sized; avatar stays anchored via bottom margin
         self._relayout()
 
-    def _clamp_to_screen(self) -> None:
-        """Keep the (possibly grown) overlay window on a visible screen."""
-        screen = self.screen() or None
-        if screen is None:
-            return
-        geo = screen.availableGeometry()
-        x, y = self.x(), self.y()
-        x = max(geo.left() - 40, min(x, geo.right() - self.width() + 40))
-        y = max(geo.top() - 20, min(y, geo.bottom() - self.height() + 20))
-        if (x, y) != (self.x(), self.y()):
-            self.move(x, y)
+    def _clamp_to_screen(self, bubble_active: bool = False) -> None:
+        """Intentionally a no-op.
+
+        The user-set avatar position is sacred ('harus tepat seperti yang
+        kusetting, tidak boleh berubah'): the window is mostly transparent
+        padding, so edges hanging off-screen are harmless. Earlier versions
+        clamped the whole window while the bubble was visible, which dragged
+        bottom-placed characters upward. The bubble may be partially cut by
+        a screen edge in extreme placements — the avatar never moves."""
+        return
 
 
 def scale_contain_pixmap(pm: QPixmap | None, max_w: int, max_h: int) -> QPixmap | None:

@@ -67,6 +67,10 @@ class AssistantController:
         self._lock = threading.Lock()
         self._audio_tap_enabled = False
         self.last_error: str | None = None
+        # in-session log ring (Logs panel); transcripts only recorded when
+        # the user enables logging — never persisted, never sent anywhere
+        self._log_lines: deque = deque(maxlen=200)
+        self.log_enabled = False
 
         self._cfg = AssistantSettings.from_settings(settings)
 
@@ -76,11 +80,53 @@ class AssistantController:
         entry = {"event": event, "t": time.monotonic(), **data}
         with self._lock:
             self._events.append(entry)
+        if self.log_enabled and event not in ("bubble_delta",):
+            self.append_log(self._format_log(event, data))
         if self._event_cb is not None:
             try:
                 self._event_cb(entry)
             except Exception:  # noqa: BLE001 - UI callback isolated
                 pass
+
+    def _format_log(self, event: str, data: dict) -> str:
+        """One log line per event; skips secret-shaped values."""
+        parts = [event]
+        for key, value in data.items():
+            if key.lower().endswith(("key", "token", "secret")):
+                value = "***"
+            parts.append(f"{key}={value}")
+        return " ".join(str(p) for p in parts)[:300]
+
+    def append_log(self, text: str) -> None:
+        """Append a line to the in-session log ring (never persisted)."""
+        stamp = time.strftime("%H:%M:%S")
+        with self._lock:
+            self._log_lines.append(f"{stamp} {text}")
+
+    def poll_log_lines(self, after: int = 0) -> list[str]:
+        """New log lines since index `after`; returns (none) if disabled."""
+        if not self.log_enabled:
+            return []
+        with self._lock:
+            return list(self._log_lines)[after:]
+
+    def log_lines(self) -> list[str]:
+        """All captured lines regardless of enabled state (tests/debug)."""
+        with self._lock:
+            return list(self._log_lines)
+
+    def log_line_count(self) -> int:
+        with self._lock:
+            return len(self._log_lines)
+
+    def clear_log(self) -> None:
+        with self._lock:
+            self._log_lines.clear()
+
+    def set_log_enabled(self, enabled: bool) -> None:
+        self.log_enabled = bool(enabled)
+        if self.log_enabled:
+            self.append_log("logging enabled")
 
     def poll_events(self, limit: int = 64) -> list[dict]:
         """Drain events (called from the GUI poll timer)."""
@@ -139,10 +185,14 @@ class AssistantController:
         self._cmd("cancel_response")
 
     def clear_history(self, context_id: str | None = None) -> None:
+        if context_id == "current":
+            context_id = self._contexts.active_id
         if context_id:
             self._conversations.clear(context_id)
+            self.append_log(f"history cleared: {context_id}")
         else:
             self._conversations.clear_all()
+            self.append_log("history cleared: all contexts")
         self.emit("history_cleared")
 
     def context_changed(self) -> None:
@@ -401,13 +451,24 @@ class AssistantController:
                         return
                     if mode == "phrase-verify":
                         if self.fsm.transition(AssistantState.LISTENING):
+                            self.append_log(
+                                f"wake: speech detected rms={rms:.4f} "
+                                f">= {threshold:.4f} (phrase-verify)")
                             self._start_recording()
                             self._recorder_feed(block)
                     else:
                         if self.fsm.transition(AssistantState.LISTENING):
+                            self.append_log(
+                                f"wake: speech detected rms={rms:.4f} "
+                                f">= {threshold:.4f} (energy mode)")
                             self.emit("status", message="listening...")
                             self._start_recording()
                             self._recorder_feed(block)
+                elif self.log_enabled and rms > threshold * 0.4:
+                    # near-miss levels help diagnose sensitivity issues
+                    self.append_log(
+                        f"wake: below threshold rms={rms:.4f} "
+                        f"< {threshold:.4f}")
 
     def _interrupt_threshold(self) -> float:
         base = self._wake.energy_threshold()
@@ -437,9 +498,11 @@ class AssistantController:
         self._recorder = None
         if recorder is None or not recorder.had_speech():
             # too short / no speech -> back to idle silently
+            self.append_log("record: utterance too short - discarded")
             self.fsm.transition(AssistantState.IDLE)
             return
         wav = recorder.result()
+        self.append_log(f"record: {len(wav)} bytes audio captured")
         self.fsm.transition(AssistantState.TRANSCRIBING)
         self.emit("status", message="transcribing...")
         self._cfg = AssistantSettings.from_settings(self._settings)
@@ -454,16 +517,22 @@ class AssistantController:
             self.fsm.transition(AssistantState.IDLE)
             return
         except STTError as exc:
+            self.append_log(f"stt: FAILED - {exc.user_message}")
             self._fail(exc.user_message)
             return
         if self._cancel_turn.is_set():
             self.fsm.transition(AssistantState.IDLE)
             return
+        self.append_log(f"heard: \"{transcript}\"")
+        self.emit("heard", text=transcript)
 
         wake_mode = self._wake.mode
         if wake_mode == "phrase-verify":
             if not self._wake.phrase_matches(transcript):
                 # not addressed to the assistant -> ignore
+                self.append_log(
+                    f"wake: phrase '{self._wake.phrase}' not in transcript "
+                    "- ignored")
                 self.fsm.transition(AssistantState.IDLE)
                 return
             question = self._wake.strip_phrase(transcript)

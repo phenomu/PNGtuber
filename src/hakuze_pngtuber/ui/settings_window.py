@@ -463,6 +463,8 @@ class SettingsWindow(QMainWindow):
         assistant = getattr(self, "_assistant", None)
         if assistant is None:
             return
+        if hasattr(self, "ai_tab"):
+            self.ai_tab.poll_log_lines()
         for event in assistant.poll_events():
             kind = event.get("event")
             if kind == "state":

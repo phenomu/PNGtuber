@@ -647,7 +647,6 @@ class TestAssistantController:
         ctrl.shutdown()
 
     def test_wake_phrase_hot_reload(self, settings, contexts, conversations):
-        # user bug: changing 'Hai GPT' -> 'halo' while ON was ignored because
         # the wake engine kept its startup snapshot
         settings.set("ai.wake_mode", "phrase-verify")
         ctrl = self._make(settings, contexts, conversations)
@@ -661,6 +660,58 @@ class TestAssistantController:
         assert ctrl._wake.mode == "phrase-verify"
         assert ctrl._wake.phrase_matches("halo, apa kabar?")
         assert not ctrl._wake.phrase_matches("selamat pagi semuanya")
+        ctrl.shutdown()
+
+    # ---------------------------------------------------------- logs panel
+    def test_log_disabled_captures_nothing(self, settings, contexts,
+                                           conversations):
+        ctrl = self._make(settings, contexts, conversations)
+        ctrl._turn_on()
+        ctrl._ask_llm("halo")  # mock LLM replies
+        ctrl._turn_off()
+        assert ctrl.poll_log_lines() == []  # nothing captured while off
+        ctrl.shutdown()
+
+    def test_log_enabled_captures_pipeline(self, settings, contexts,
+                                           conversations):
+        ctrl = self._make(settings, contexts, conversations)
+        ctrl.set_log_enabled(True)
+        ctrl._turn_on()
+        ctrl._ask_llm("halo")  # mock LLM: "Oke!"
+        ctrl._turn_off()
+        lines = "\n".join(ctrl.log_lines())
+        assert "logging enabled" in lines
+        assert "state" in lines or "assistant_on" in lines
+        assert ctrl.log_line_count() > 3
+        ctrl.shutdown()
+
+    def test_stt_failure_logged(self, settings, contexts, conversations):
+        from hakuze_pngtuber.providers.stt.base import STTError
+        ctrl = self._make(settings, contexts, conversations)
+        ctrl.set_log_enabled(True)
+        ctrl._turn_on()
+        ctrl.fsm.transition(AssistantState.LISTENING)
+        ctrl._start_recording()
+        loud = np.ones(1600, dtype=np.float32) * 0.3
+        for _ in range(20):
+            ctrl._recorder_feed(loud)
+        for _ in range(80):
+            if not ctrl._recorder_feed(np.zeros(1600, dtype=np.float32)):
+                break
+        ctrl._finish_utterance()
+        lines = "\n".join(ctrl.log_lines())
+        assert "heard" in lines  # mock STT transcript captured in log
+        ctrl.shutdown()
+
+    def test_clear_history_current_context(self, settings, contexts,
+                                           conversations):
+        ctrl = self._make(settings, contexts, conversations)
+        ctrl._turn_on()
+        ctrl._ask_llm("halo")
+        active = ctrl._contexts.active_id
+        assert len(conversations.history(active)) > 0
+        ctrl.clear_history("current")
+        assert conversations.history(active) == []
         ctrl.shutdown()
 
 

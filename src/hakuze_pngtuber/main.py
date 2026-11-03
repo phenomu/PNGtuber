@@ -31,6 +31,15 @@ def _app_icon() -> QIcon:
 
 
 def main() -> int:
+    # subprocess dispatch modes (frozen exe re-invokes itself for SAPI
+    # isolation — see providers/tts/_sapi_synth.py)
+    argv = sys.argv[1:]
+    if argv and argv[0] in ("--sapi-voices", "--sapi-synth"):
+        from .providers.tts._sapi_synth import run_synth, run_voices
+        if argv[0] == "--sapi-voices":
+            return run_voices()
+        return run_synth(argv[1:])
+
     signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl-C works while Qt loop runs
 
     app = QApplication(sys.argv)

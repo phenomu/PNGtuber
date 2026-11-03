@@ -29,7 +29,9 @@ from hakuze_pngtuber.providers.llm.openai_compatible import MockLLM  # noqa: E40
 from hakuze_pngtuber.providers.llm.base import (  # noqa: E402
     LLMAuthError, LLMCancelled, LLMEmptyResponse, LLMRequest)
 from hakuze_pngtuber.providers.stt.openai_stt import MockSTT  # noqa: E402
-from hakuze_pngtuber.providers.tts.base import MockTTS  # noqa: E402
+from hakuze_pngtuber.providers.tts.base import MockTTS, TTSRequest  # noqa: E402
+from hakuze_pngtuber.providers.tts.openai_tts import WindowsSapiTTS  # noqa: E402
+from hakuze_pngtuber.providers.tts.base import TTSError  # noqa: E402
 from hakuze_pngtuber.core.tts_engine import TTSEngine  # noqa: E402
 from hakuze_pngtuber.utils.credential_store import CredentialStore  # noqa: E402
 from hakuze_pngtuber.utils.global_hotkey import MockHotkeyManager  # noqa: E402
@@ -713,6 +715,55 @@ class TestProviderHotReconfigure:
         settings.set("ai.tts_provider", "openai")
         ctrl._refresh_providers()
         assert tts.provider is mock  # injected providers are left alone
+
+
+# ---------------------------------------------------------------- sapi
+class TestWindowsSapiSubprocess:
+    """On non-Windows the SAPI runner must FAIL FAST, never hang."""
+
+    def test_synth_command_dev_form(self):
+        sapi = WindowsSapiTTS(voice="Microsoft Zira")
+        argv = sapi._synth_command("halo", "Microsoft Zira", 1.0, 1.0,
+                                   "/tmp/out.wav")
+        assert argv[0:4] == [sys.executable, "-m",
+                              "hakuze_pngtuber.providers.tts._sapi_synth",
+                              "synth"]
+        assert "--text" in argv and "halo" in argv
+        assert "--voice" in argv and "Microsoft Zira" in argv
+
+    def test_synth_no_voice_omits_flag(self):
+        sapi = WindowsSapiTTS()
+        argv = sapi._synth_command("halo", None, 1.0, 1.0, "/tmp/o.wav")
+        assert "--voice" not in argv
+
+    def test_synth_fails_fast_or_succeeds_bounded(self):
+        sapi = WindowsSapiTTS()
+        sapi._TIMEOUT_S = 30.0
+        start = time.monotonic()
+        try:
+            data = sapi.synthesize(TTSRequest(text="tes"))
+            assert len(data) > 1000  # Windows: real synthesis works
+        except TTSError:
+            pass  # non-Windows: clean bounded failure, worker survives
+        assert time.monotonic() - start < 35.0
+
+    def test_list_voices_bounded(self):
+        sapi = WindowsSapiTTS()
+        start = time.monotonic()
+        voices = sapi.list_voices()
+        if sys.platform.startswith("win"):
+            assert len(voices) > 0  # Windows: real SAPI voices
+        else:
+            assert voices == []      # non-Windows: graceful empty
+            assert sapi._last_error  # diagnostics present, no exception
+        assert time.monotonic() - start < 20.0
+
+    def test_reconfigure_clears_voice_cache(self):
+        sapi = WindowsSapiTTS()
+        sapi._voices_cache = ["A", "B"]
+        sapi.reconfigure(voice="A")
+        assert sapi._voices_cache is None
+        assert sapi._voice == "A"
 
 
 class _FakeCreds(CredentialStore):

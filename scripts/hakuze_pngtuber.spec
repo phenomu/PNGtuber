@@ -15,7 +15,9 @@ a = Analysis(
     pathex=[os.path.join(ROOT, "src")],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    # pyttsx3 loads its SAPI driver dynamically (not statically visible);
+    # _sapi_synth runs in a subprocess that needs the full driver package
+    hiddenimports=["pyttsx3", "pyttsx3.drivers", "pyttsx3.drivers.sapi5"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

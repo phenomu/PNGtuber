@@ -556,6 +556,7 @@ class AssistantController:
     def _do_test_tts(self, text: str) -> None:
         if not text:
             text = "Halo! Aku Hakuze."
+        self.emit("status", message="testing voice...")
         self._refresh_providers()
         voice = self._cfg.tts_voice
         if voice:

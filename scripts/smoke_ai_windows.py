@@ -55,24 +55,32 @@ def main() -> int:
     hk2.shutdown()
     hk3.shutdown()
 
-    # --- 3. Windows SAPI TTS (pyttsx3) -----------------------------------
+    # --- 3. Windows SAPI TTS (subprocess isolation) ----------------------
     try:
         from hakuze_pngtuber.providers.tts.openai_tts import WindowsSapiTTS
+        from hakuze_pngtuber.providers.tts.base import TTSRequest
         sapi = WindowsSapiTTS()
         voices = sapi.list_voices()
-        check("SAPI voices enumerated", len(voices) > 0,
-              f"count={len(voices)}")
-        wav = sapi.synthesize(
-            __import__("hakuze_pngtuber.providers.tts.base",
-                       fromlist=["TTSRequest"]).TTSRequest(
-                text="Halo, ini uji suara Hakuze."))
+        check("SAPI voices enumerated (subprocess)", len(voices) > 0,
+              f"count={len(voices)} {voices}")
+        t0 = time.monotonic()
+        wav = sapi.synthesize(TTSRequest(
+            text="Halo, ini uji suara Hakuze."))
+        t1 = time.monotonic()
         check("SAPI synthesis produced WAV", len(wav) > 1000,
-              f"bytes={len(wav)}")
+              f"bytes={len(wav)} in {t1-t0:.1f}s")
         check("SAPI WAV header", wav[:4] == b"RIFF")
-        # parse duration
+        # THE user-reported hang: change voice/model, then synthesize again
+        if voices:
+            sapi.reconfigure(voice=voices[-1])
+        t0 = time.monotonic()
+        wav2 = sapi.synthesize(TTSRequest(text="Tes kedua setelah ganti suara."))
+        t1 = time.monotonic()
+        check("SAPI re-synth after reconfigure (no hang)",
+              len(wav2) > 1000, f"bytes={len(wav2)} in {t1-t0:.1f}s")
         import io
         import wave
-        with wave.open(io.BytesIO(wav)) as w:
+        with wave.open(io.BytesIO(wav2)) as w:
             dur_ms = 1000 * w.getnframes() / w.getframerate()
         check("SAPI audio duration sane", 500 < dur_ms < 10000,
               f"{dur_ms:.0f} ms")

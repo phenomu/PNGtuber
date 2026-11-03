@@ -36,7 +36,8 @@ class OpenAISTT(BaseSTTProvider):
             else:
                 import openai  # noqa: PLC0415 - lazy by design
                 self._client = openai.OpenAI(
-                    api_key=self._api_key or "missing", max_retries=1)
+                    api_key=self._api_key or "missing", max_retries=1,
+                    timeout=30.0)  # SDK default is 600s - never wait that long
         return self._client
 
     def reset(self) -> None:

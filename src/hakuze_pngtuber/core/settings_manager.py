@@ -53,15 +53,42 @@ class SettingsManager:
         "breath_period_ms": (500.0, 20000.0),
         "sustain_bob_px": (0.0, 20.0),
         "sustain_bob_period_ms": (300.0, 10000.0),
+        # assistant (section "ai") — key names unique across sections
+        "wake_sensitivity": (0.05, 1.0),
+        "llm_temperature": (0.0, 2.0),
+        "llm_max_tokens": (16.0, 4096.0),
+        "llm_timeout_s": (5.0, 300.0),
+        "stt_timeout_s": (5.0, 120.0),
+        "tts_speed": (0.25, 4.0),
+        "tts_volume": (0.0, 1.0),
+        "bubble_width": (200.0, 900.0),
+        "bubble_max_lines": (1.0, 30.0),
+        "bubble_font_size": (9.0, 32.0),
+        "bubble_typewriter_ms": (0.0, 200.0),
+        "bubble_duration_s": (0.0, 60.0),
+        "bubble_pos_offset_x": (-2000.0, 2000.0),
+        "bubble_pos_offset_y": (-2000.0, 2000.0),
+        "bubble_animation_ms": (50.0, 1000.0),
+        "bubble_opacity": (0.05, 1.0),
+        "history_max_turns": (2.0, 50.0),
     }
 
     _BOOLEANS = {
         "enabled", "breathing", "always_on_top", "click_through", "show_on_start",
         "edit_mode", "minimize_to_tray", "start_minimized", "start_with_windows",
+        # assistant booleans (also valid in other sections if ever added)
+        "ai_enabled", "start_on_startup", "llm_streaming", "interrupt_allow",
+        "bubble_enabled", "bubble_voice_mode", "history_persistent",
+        "history_clear_on_exit", "persona_emoji", "use_emoji",
     }
 
     _INTEGERS = {"pos_x", "pos_y", "attack_ms", "release_ms", "min_speech_ms", "silence_ms",
-                 "duration_ms", "breath_period_ms", "sustain_bob_period_ms"}
+                 "duration_ms", "breath_period_ms", "sustain_bob_period_ms",
+                 # assistant integers
+                 "llm_max_tokens", "bubble_width", "bubble_max_lines",
+                 "bubble_font_size", "bubble_typewriter_ms",
+                 "bubble_pos_offset_x", "bubble_pos_offset_y",
+                 "bubble_animation_ms", "history_max_turns"}
 
     def __init__(self, user_path: Path | None = None, defaults_path: Path | None = None):
         self._defaults_path = Path(defaults_path or default_settings_path())

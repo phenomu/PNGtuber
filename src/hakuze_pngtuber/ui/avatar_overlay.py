@@ -14,6 +14,10 @@ from ..core.animation_engine import AnimationEngine
 from ..core.asset_manager import AssetManager
 from ..utils.image_utils import desaturate
 from ..utils.platform_utils import set_click_through
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .dialogue_bubble import DialogueBubble
 
 
 def pil_to_qpixmap(pil_img) -> QPixmap:
@@ -57,6 +61,9 @@ class AvatarOverlay(QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.setTimerType(Qt.PreciseTimer)
 
+        self._bubble: "DialogueBubble | None" = None
+        self._bubble_height = 0
+
         self.reload_assets()
         self._apply_window_flags()
 
@@ -88,10 +95,12 @@ class AvatarOverlay(QWidget):
         self._disp_h = max(40, int(base_h * scale))
         self._idle_scaled = scale_contain_pixmap(self._idle_gray_pm, self._disp_w, self._disp_h)
         self._talk_scaled = scale_contain_pixmap(self._talk_pm, self._disp_w, self._disp_h)
-        self.setFixedSize(self._disp_w + 80, self._disp_h + 120)
+        bubble_extra = self._bubble_height if self._bubble is not None else 0
+        self.setFixedSize(self._disp_w + 80, self._disp_h + 120 + bubble_extra)
         pos_x = int(self._settings.get("avatar.pos_x", 120))
         pos_y = int(self._settings.get("avatar.pos_y", 120))
         self.move(pos_x, pos_y)
+        self._clamp_to_screen()
 
     def _apply_window_flags(self) -> None:
         on_top = bool(self._settings.get("overlay.always_on_top", True))
@@ -195,6 +204,58 @@ class AvatarOverlay(QWidget):
     def stop(self) -> None:
         self._timer.stop()
         self.hide()
+
+    # --- assistant dialogue bubble ----------------------------------------
+    def ensure_bubble(self) -> "DialogueBubble":
+        """Create/return the dialogue bubble child (lazily)."""
+        from .dialogue_bubble import DialogueBubble
+        if self._bubble is None:
+            cfg = {
+                "width": int(self._settings.get("ai.bubble_width", 420)),
+                "max_lines": int(self._settings.get("ai.bubble_max_lines", 6)),
+                "font_size": int(self._settings.get("ai.bubble_font_size", 14)),
+                "typewriter_ms": int(self._settings.get("ai.bubble_typewriter_ms", 24)),
+                "display_duration_s": float(self._settings.get("ai.bubble_duration_s", 8.0)),
+                "opacity": float(self._settings.get("ai.bubble_opacity", 0.88)),
+            }
+            self._bubble = DialogueBubble(self, **cfg)
+            self._bubble.hidden.connect(self._on_bubble_hidden)
+            self._bubble_height = self._bubble.height() + 4
+            self._relayout()
+        return self._bubble
+
+    def refresh_bubble_style(self) -> None:
+        if self._bubble is not None:
+            self._bubble.setBubbleStyle(
+                width=int(self._settings.get("ai.bubble_width", 420)),
+                max_lines=int(self._settings.get("ai.bubble_max_lines", 6)),
+                font_size=int(self._settings.get("ai.bubble_font_size", 14)),
+                typewriter_ms=int(self._settings.get("ai.bubble_typewriter_ms", 24)),
+                display_duration_s=float(self._settings.get("ai.bubble_duration_s", 8.0)),
+                opacity=float(self._settings.get("ai.bubble_opacity", 0.88)))
+            self._bubble_height = self._bubble.height() + 4
+            self._relayout()
+
+    def hide_bubble(self) -> None:
+        if self._bubble is not None:
+            self._bubble.hide_immediately()
+
+    def _on_bubble_hidden(self) -> None:
+        self._bubble_height = 0
+        # keep window stable-sized; avatar stays anchored via bottom margin
+        self._relayout()
+
+    def _clamp_to_screen(self) -> None:
+        """Keep the (possibly grown) overlay window on a visible screen."""
+        screen = self.screen() or None
+        if screen is None:
+            return
+        geo = screen.availableGeometry()
+        x, y = self.x(), self.y()
+        x = max(geo.left() - 40, min(x, geo.right() - self.width() + 40))
+        y = max(geo.top() - 20, min(y, geo.bottom() - self.height() + 20))
+        if (x, y) != (self.x(), self.y()):
+            self.move(x, y)
 
 
 def scale_contain_pixmap(pm: QPixmap | None, max_w: int, max_h: int) -> QPixmap | None:

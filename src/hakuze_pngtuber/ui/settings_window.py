@@ -51,7 +51,7 @@ class SettingsWindow(QMainWindow):
     closing_to_tray = Signal()
     really_quit_requested = Signal()
 
-    TABS = ("Avatar", "Audio", "Animation", "Overlay", "App")
+    TABS = ("Avatar", "Audio", "Animation", "Overlay", "AI Assistant", "App")
 
     def __init__(self, settings: SettingsManager, controller: AvatarController,
                  engine: AudioEngine, assets: AssetManager, app_icon=None):
@@ -98,7 +98,7 @@ class SettingsWindow(QMainWindow):
         self.tabs = QTabWidget()
         for name in self.TABS:
             page = QWidget()
-            build = getattr(self, f"_build_{name.lower()}_tab")
+            build = getattr(self, f"_build_{name.lower().replace(' ', '_')}_tab")
             page_layout = QVBoxLayout(page)
             page_layout.setContentsMargins(10, 14, 10, 10)
             page_layout.setSpacing(12)
@@ -378,6 +378,131 @@ class SettingsWindow(QMainWindow):
         col.addWidget(self.btn_reset)
         L.addWidget(panel)
 
+    # ------------------------------------------------------------------ AI
+    def _build_ai_assistant_tab(self, L: QVBoxLayout) -> None:
+        from .assistant_settings_tab import AssistantSettingsTab
+        if getattr(self, "_assistant", None) is None:
+            L.addWidget(QLabel("AI companion not initialized"))
+            return
+        tab = AssistantSettingsTab(
+            self._settings, self._assistant, self._assistant_contexts,
+            self._assistant_creds, parent=self)
+        tab.test_requested.connect(self._on_ai_test)
+        tab.clear_history_requested.connect(self._on_ai_clear_history)
+        tab.speak_test_requested.connect(self._on_ai_speak_test)
+        tab.status_message.connect(
+            lambda msg: self.statusBar().showMessage(msg, 3000))
+        tab.context_widget.active_changed.connect(self._on_ai_context_changed)
+        self.ai_tab = tab
+        L.addWidget(tab)
+
+    def _on_ai_test(self, what: str) -> None:
+        if getattr(self, "_assistant", None) is None:
+            return
+        if what == "llm":
+            self._assistant.test_llm()
+        elif what == "stt":
+            self._assistant.test_stt()
+        elif what == "tts":
+            self._assistant.test_tts()
+
+    def _on_ai_clear_history(self, which: str) -> None:
+        if getattr(self, "_assistant", None) is None:
+            return
+        if which == "current":
+            ctx = self._assistant_contexts.active_context()
+            self._assistant.clear_history(ctx.id)
+            self.statusBar().showMessage(f"history cleared: {ctx.name}", 3000)
+        else:
+            btn = QMessageBox.question(
+                self, "Clear history", "Clear ALL conversation history?")
+            if btn == QMessageBox.Yes:
+                self._assistant.clear_history(None)
+                self.statusBar().showMessage("all history cleared", 3000)
+
+    def _on_ai_speak_test(self, what: str) -> None:
+        if what == "bubble_preview" and self._overlay is not None:
+            bubble = self._overlay.ensure_bubble()
+            bubble.show_text("Halo! Aku Hakuze, companion kamu~ hehe "
+                             "preview bubble like ini yaa!")
+
+    def _on_ai_context_changed(self) -> None:
+        if getattr(self, "_assistant", None) is not None:
+            self._assistant.context_changed()
+        if getattr(self, "_assistant_contexts", None) is not None:
+            self._assistant_contexts.save()
+
+    def attach_assistant(self, assistant, contexts, credentials) -> None:
+        """Inject the assistant stack (built by main) into this window."""
+        self._assistant = assistant
+        self._assistant_contexts = contexts
+        self._assistant_creds = credentials
+        # rebuild the AI tab if the window is already constructed
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == "AI Assistant":
+                self.tabs.removeTab(i)
+                break
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(10, 14, 10, 10)
+        page_layout.setSpacing(12)
+        self._build_ai_assistant_tab(page_layout)
+        page_layout.addStretch(1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        self.tabs.addTab(scroll, "AI Assistant")
+
+    def poll_assistant_events(self) -> None:
+        """Called from _on_poll: drain controller events into UI."""
+        assistant = getattr(self, "_assistant", None)
+        if assistant is None:
+            return
+        for event in assistant.poll_events():
+            kind = event.get("event")
+            if kind == "state":
+                if hasattr(self, "ai_tab"):
+                    self.ai_tab.set_assistant_state(event.get("state", "off"))
+                hook = getattr(self, "assistant_state_hook", None)
+                if hook is not None:
+                    try:
+                        hook(event.get("state"))
+                    except Exception:  # noqa: BLE001
+                        pass
+                self.statusBar().showMessage(
+                    f"assistant: {event.get('state', '')}", 2000)
+            elif kind in ("status", "error"):
+                self.statusBar().showMessage(event.get("message", ""), 4000)
+            elif kind == "test_result":
+                if hasattr(self, "ai_tab"):
+                    self.ai_tab.show_test_result(
+                        event.get("what", "?"), bool(event.get("ok")),
+                        str(event.get("message", "")))
+            elif kind in ("bubble_show", "bubble_delta", "bubble_done",
+                          "bubble_cancel"):
+                self._assistant_bubble_event(kind, event)
+
+    def _assistant_bubble_event(self, kind: str, event: dict) -> None:
+        if self._overlay is None:
+            return
+        cfg_enabled = bool(self._settings.get("ai.bubble_enabled", True))
+        mode = str(self._settings.get("ai.output_mode", "text"))
+        voice_bubble = bool(self._settings.get("ai.bubble_voice_mode", False))
+        show = cfg_enabled and (
+            mode in ("text", "both") or (mode == "voice" and voice_bubble))
+        if not show and kind != "bubble_cancel":
+            return
+        bubble = self._overlay.ensure_bubble()
+        if kind == "bubble_show":
+            bubble.show_text("")
+        elif kind == "bubble_delta":
+            bubble.append_delta(str(event.get("text", "")))
+        elif kind == "bubble_done":
+            bubble.complete_text(str(event.get("text", "")))
+        elif kind == "bubble_cancel":
+            bubble.hide_immediately()
+
     # ================================================================= poll
     def _on_poll(self) -> None:
         sample = None if self._muted else self._engine.poll()
@@ -395,6 +520,7 @@ class SettingsWindow(QMainWindow):
             self.state_label.setText(f"STATE: {state}")
             if self._overlay is not None and self._overlay.isVisible():
                 self._overlay.set_state(self._controller.talking)
+        self.poll_assistant_events()
 
     # ================================================================= misc
     def _set_and_save(self, key: str, value) -> None:

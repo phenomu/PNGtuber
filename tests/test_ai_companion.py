@@ -495,6 +495,28 @@ class TestTTSEngine:
         assert any(spoken)
         ctrl.shutdown()
 
+    def test_output_mode_both_streaming_speaks(self, settings, contexts,
+                                               conversations):
+        # live bug: streaming + output both showed text but NO voice -
+        # the controller buffered deltas locally while the engine's
+        # sentence splitter read its own (always empty) buffer
+        settings.set("ai.output_mode", "both")
+        settings.set("ai.llm_streaming", True)
+        tts = TTSEngine(MockTTS())
+        spoken = []
+        tts.on_speaking_changed = lambda on: spoken.append(on)
+        llm = LLMEngine(MockLLM(["Halo! Aku Hakuze. Senang bertemu."]),
+                        contexts, conversations, streaming=True)
+        ctrl = AssistantController(
+            settings, contexts, conversations, llm, MockSTT(["q"]), tts)
+        ctrl._turn_on()
+        ctrl._ask_llm("halo siapa kamu")
+        assert ctrl.state is AssistantState.IDLE
+        assert any(spoken), "streaming voice never spoke"
+        # the spoken chunks must cover the sentences, in order
+        assert "Halo!" in "".join(tts.provider.calls)
+        ctrl.shutdown()
+
     def test_duplicate_playback_prevented(self):
         tts = TTSEngine(MockTTS())
         tts.play_pcm(np.zeros(24000, dtype=np.float32), 24000)
@@ -528,8 +550,7 @@ class TestTTSEngine:
         # sentence-chunked streaming: complete sentences enqueue while the
         # rest still streams; the final flush drains everything
         tts = TTSEngine(MockTTS())
-        tts._buffer = "Halo! Aku Hakuze. "
-        tts.flush_stream_sentences(None, 1.0)
+        tts.flush_stream_sentences("Halo! Aku Hakuze. ", None, 1.0)
         # the worker may already have picked an item up - count via
         # queue backlog + worker activity, not raw qsize
         time.sleep(0.3)
@@ -542,7 +563,7 @@ class TestTTSEngine:
 
     def test_stream_stop_cancels(self):
         tts = TTSEngine(MockTTS())
-        tts.flush_stream_sentences(None, 1.0)
+        tts.flush_stream_sentences("", None, 1.0)  # start the worker
         tts._sentence_q.put("Kalimat panjang sekali. " * 3)
         tts.flush_stream_final(None, 1.0)
         tts.stop()

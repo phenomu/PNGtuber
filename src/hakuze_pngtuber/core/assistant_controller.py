@@ -627,7 +627,7 @@ class AssistantController:
         # voice starts while the bubble still types (the old flow waited
         # for the full response, so speech always arrived after the text)
         stream_voice = voice_mode and self._cfg.llm_streaming
-        self._tts_buffer = ""
+        fed_any = [False]
 
         def _on_delta(delta: str) -> None:
             if not delta:
@@ -635,9 +635,13 @@ class AssistantController:
             if show_bubble:
                 self.emit("bubble_delta", text=delta)
             if stream_voice:
-                self._tts_buffer += delta
+                # feed the delta DIRECTLY to the engine: its internal
+                # buffer is what sentence-splitting reads (the previous
+                # controller-side buffer was never seen by the engine,
+                # so nothing was ever spoken)
+                fed_any[0] = True
                 self._tts.flush_stream_sentences(
-                    self._cfg.tts_voice or None, self._cfg.tts_speed)
+                    delta, self._cfg.tts_voice or None, self._cfg.tts_speed)
 
         try:
             text = self._llm.respond(
@@ -660,13 +664,15 @@ class AssistantController:
         self.fsm.transition(AssistantState.RESPONDING)
         if show_bubble:
             self.emit("bubble_done", text=text)
-        if stream_voice:
+        if stream_voice and fed_any[0]:
             # flush the trailing partial sentence, then wait for the
             # queue to drain (synthesis + playback per sentence)
             self._tts.flush_stream_final(self._cfg.tts_voice or None,
                                          self._cfg.tts_speed)
             self._await_tts_done()
         elif voice_mode:
+            # no deltas arrived (provider fell back to non-streaming):
+            # speak the whole text in one utterance
             self._speak_response(text)
         else:
             self.fsm.transition(AssistantState.IDLE)

@@ -157,6 +157,7 @@ class TTSEngine:
             return
 
         def _worker():
+            import time
             while True:
                 item = self._sentence_q.get()
                 if item is None:
@@ -168,6 +169,13 @@ class TTSEngine:
                         TTSRequest(text=item, voice=voice, speed=speed,
                                    cancel_event=self._cancel))
                     self.play_wav(wav)
+                    # wait for this utterance to finish before the next
+                    # one (play_pcm starts playback asynchronously)
+                    deadline = time.monotonic() + 120.0
+                    while (self.is_speaking_locked()
+                           and not self._cancel.is_set()
+                           and time.monotonic() < deadline):
+                        time.sleep(0.05)
                 except TTSError:
                     pass  # skip failed sentence; keep the stream alive
                 finally:
@@ -178,9 +186,11 @@ class TTSEngine:
             target=_worker, name="hakuze-tts-stream", daemon=True)
         self._stream_thread.start()
 
-    def flush_stream_sentences(self, voice: str | None = None,
+    def flush_stream_sentences(self, delta: str = "",
+                               voice: str | None = None,
                                speed: float = 1.0) -> None:
-        """Feed streamed text; enqueue every COMPLETE sentence."""
+        """Feed one streamed delta; enqueue every COMPLETE sentence."""
+        self._buffer += delta
         self._start_stream_thread(voice, speed)
         while True:
             cut = _sentence_end(self._buffer)
@@ -194,7 +204,7 @@ class TTSEngine:
     def flush_stream_final(self, voice: str | None = None,
                            speed: float = 1.0) -> None:
         """Stream ended: flush the trailing partial as the last sentence."""
-        self.flush_stream_sentences(voice, speed)
+        self.flush_stream_sentences("", voice, speed)
         rest = self._buffer.strip()
         self._buffer = ""
         if rest:
@@ -260,7 +270,9 @@ class TTSEngine:
 
     def play_pcm(self, pcm: np.ndarray, rate: int) -> bool:
         import time
-        self.stop()
+        # interrupt any current utterance WITHOUT draining the streaming
+        # sentence queue (the stream worker calls this per sentence)
+        self._interrupt_current()
         self._cancel.clear()
         with self._lock:
             self._speaking_since_ms = time.monotonic() * 1000.0
@@ -273,6 +285,15 @@ class TTSEngine:
         if self.on_speaking_changed:
             self.on_speaking_changed(True)
         return True
+
+    def _interrupt_current(self) -> None:
+        """Cancel only the current playback; queue stays intact."""
+        self._cancel.set()
+        with self._lock:
+            current = self._current
+        if current is not None:
+            current.wait(timeout=1.0)
+        self._cancel.clear()
 
     def _on_done(self, cancelled: bool) -> None:
         import time

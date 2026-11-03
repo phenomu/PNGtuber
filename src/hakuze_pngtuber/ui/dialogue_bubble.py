@@ -134,16 +134,18 @@ class DialogueBubble(QWidget):
         else:
             self._start_hide_timer()
 
-    def show_thinking(self) -> None:
-        """Cloud-style 'sedang berpikir...' indicator while the LLM runs.
+    _THINKING_TEXT = "sedang berpikir"
 
-        Replaced by the real bubble on the first streamed delta."""
-        self._full_text = ""
-        self._revealed = 0
+    def show_thinking(self) -> None:
+        """Show the NORMAL bubble with 'sedang berpikir...' while the LLM
+        works (animated dots). Replaced by the answer on the first delta."""
         self._thinking = True
+        self._full_text = self._THINKING_TEXT
+        self._revealed = len(self._full_text)  # label shows instantly
         self._visible_state = True
         self._fade = 1.0
         self._layout()
+        self.setWindowOpacity(1.0)
         self.show()
         self.raise_()
         self._hide_timer.stop()
@@ -152,36 +154,9 @@ class DialogueBubble(QWidget):
 
     def _tick_think(self) -> None:
         self._think_dots = (self._think_dots + 1) % 4
+        self._full_text = self._THINKING_TEXT + "." * self._think_dots
+        self._revealed = len(self._full_text)
         self.update()
-
-    def _paint_thinking(self, painter: QPainter, alpha: float) -> None:
-        """Cloud bubble with animated 'sedang berpikir' + dots."""
-        w, h = 230.0, 74.0
-        x = (self._width - w) / 2.0
-        y = 2.0
-        cloud = QPainterPath()
-        # main puffy body: 3 arcs unioned
-        for cx, cy, r in ((x + 52, y + 38, 34),
-                          (x + 108, y + 30, 40),
-                          (x + 168, y + 40, 32)):
-            cloud.addEllipse(QPointF(cx, cy), r, r)
-        # flat-ish bottom edge
-        bottom = QRectF(x + 20, y + 44, w - 40, 26)
-        cloud.addRoundedRect(bottom, 22, 22)
-        # small tail puff toward the character
-        cloud.addEllipse(QPointF(x + w / 2 + 6, y + h + 2), 7, 7)
-        cloud.addEllipse(QPointF(x + w / 2 - 8, y + h + 12), 5, 5)
-
-        body = QColor(20, 26, 42, int(215 * self._bg_opacity * self._fade))
-        border = QColor(33, 230, 255, int(235 * alpha))
-        painter.setPen(QPen(border, 2))
-        painter.setBrush(body)
-        painter.drawPath(cloud.simplified())
-        # text + animated dots
-        text = "sedang berpikir" + "." * self._think_dots
-        painter.setFont(self.font())
-        painter.setPen(QColor(215, 246, 255, int(255 * alpha)))
-        painter.drawText(QPointF(x + 34, y + 42), text)
 
     def _stop_thinking(self) -> None:
         self._think_timer.stop()
@@ -193,9 +168,12 @@ class DialogueBubble(QWidget):
         if not delta:
             return
         if self._thinking:
-            self._stop_thinking()   # first delta: replace the indicator
+            # first delta: drop the 'sedang berpikir' label, restart text
+            self._stop_thinking()
+            self._full_text = ""
+            self._revealed = 0
         if not self._visible_state:
-            self.show_text()
+            self.show_text(delta)
             return
         self._full_text += delta
         if self._typewriter_ms <= 0:
@@ -212,10 +190,12 @@ class DialogueBubble(QWidget):
     def complete_text(self, text: str | None = None) -> None:
         """Response finished: keep the typewriter reveal going (it catches
         up), schedule hide AFTER the reveal completes."""
-        if text is not None:
-            self._full_text = text
         if self._thinking:
             self._stop_thinking()
+            self._full_text = ""
+            self._revealed = 0
+        if text is not None:
+            self._full_text = text
         self._visible_state = True
         if not self.isVisible():
             self._fade = 1.0
@@ -311,10 +291,6 @@ class DialogueBubble(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         alpha = self._opacity * self._fade
 
-        if self._thinking:
-            self._paint_thinking(painter, alpha)
-            return
-
         # bubble body
         rect = QRectF(1.0, 1.0, float(self._width - 2), float(self._height - 16))
         path = QPainterPath()
@@ -333,12 +309,6 @@ class DialogueBubble(QWidget):
         painter.setPen(QPen(border, 2))
         painter.setBrush(body)
         painter.drawPath(path.united(tail))
-        # purple accent underline
-        accent = QColor(185, 107, 255, int(220 * alpha))
-        painter.setPen(QPen(accent, 2))
-        underline = QRectF(rect.left() + 14, rect.top() + 5,
-                           46.0, 3.0)
-        painter.drawRoundedRect(underline, 1.5, 1.5)
 
         # text (plain rendering — markup is never interpreted)
         shown = self._full_text[:self._revealed]

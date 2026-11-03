@@ -319,7 +319,25 @@ class TestLLMEngine:
                         streaming=True)
         text = llm.respond("hai", on_delta=deltas.append)
         assert text == "Halo"
-        assert "".join(deltas) == "Halo"
+        assert deltas and "".join(deltas) == "Halo"
+
+    def test_reasoning_disabled_sends_flag(self, contexts, conversations):
+        # reasoning OFF must ask the model not to think (GLM thinking
+        # burns the whole max_tokens budget before answering, cutting
+        # the visible answer to 1-3 chars)
+        llm = LLMEngine(MockLLM(["Oke"]), contexts, conversations,
+                        streaming=False, reasoning=False)
+        llm.respond("q")
+        call = llm.provider.calls[-1]
+        extra = call.get("extra")
+        assert extra and extra.get("enable_thinking") is False
+
+    def test_reasoning_enabled_no_flag(self, contexts, conversations):
+        llm = LLMEngine(MockLLM(["Oke"]), contexts, conversations,
+                        streaming=False, reasoning=True)
+        llm.respond("q")
+        call = llm.provider.calls[-1]
+        assert not call.get("extra")
 
     def test_cancellation_no_history_write(self, contexts, conversations):
         llm = LLMEngine(MockLLM(["never stored"]), contexts, conversations,
@@ -906,6 +924,88 @@ class TestAssistantController:
 
 # ---------------------------------------------------------------- hot reload
 class TestProviderHotReconfigure:
+
+    def test_stream_truncated_raises_clear_error(self):
+        # live bug: reasoning models burn the max_tokens budget on hidden
+        # 'reasoning_content' before the answer - the stream then ended
+        # with finish_reason='length' after 1-3 visible chars and the
+        # bubble showed a single-letter 'answer'. Now it raises a clear
+        # LLMTruncatedError instead of a confusing partial answer.
+        from hakuze_pngtuber.providers.llm.openai_compatible import \
+            OpenAICompatibleLLM
+        from hakuze_pngtuber.providers.llm.base import (
+            LLMRequest, LLMTruncatedError)
+
+        class Delta:
+            def __init__(self, content):
+                self.content = content
+                self.reasoning_content = None
+
+        class Choice:
+            def __init__(self, content, finish=None):
+                self.delta = Delta(content)
+                self.finish_reason = finish
+
+        class Chunk:
+            def __init__(self, content, finish=None):
+                self.choices = [Choice(content, finish)]
+
+        class Chat:
+            class completions:
+                @staticmethod
+                def create(**kwargs):
+                    return iter([Chunk("P", None),
+                                 Chunk("N", None),
+                                 Chunk("G", "length")])
+
+        class FakeClient:
+            chat = Chat()
+
+        provider = OpenAICompatibleLLM(
+            api_key="x", default_model="m",
+            client_factory=lambda **kw: FakeClient())
+        req = LLMRequest(messages=[{"role": "user", "content": "q"}])
+        try:
+            provider.stream(req)
+            raised = None
+        except LLMTruncatedError as exc:
+            raised = exc
+        assert raised is not None
+        assert "max tokens" in raised.user_message.lower()
+
+    def test_stream_normal_finish_no_error(self):
+        from hakuze_pngtuber.providers.llm.openai_compatible import \
+            OpenAICompatibleLLM
+        from hakuze_pngtuber.providers.llm.base import LLMRequest
+
+        class Delta:
+            def __init__(self, content):
+                self.content = content
+                self.reasoning_content = None
+
+        class Choice:
+            def __init__(self, content, finish=None):
+                self.delta = Delta(content)
+                self.finish_reason = finish
+
+        class Chunk:
+            def __init__(self, content, finish=None):
+                self.choices = [Choice(content, finish)]
+
+        class Chat:
+            class completions:
+                @staticmethod
+                def create(**kwargs):
+                    return iter([Chunk("Aku GLM.", "stop")])
+
+        class FakeClient:
+            chat = Chat()
+
+        provider = OpenAICompatibleLLM(
+            api_key="x", default_model="m",
+            client_factory=lambda **kw: FakeClient())
+        req = LLMRequest(messages=[{"role": "user", "content": "q"}])
+        assert provider.stream(req) == "Aku GLM."
 
     def test_llm_key_and_model_reach_provider(self, settings, contexts,
                                               conversations):

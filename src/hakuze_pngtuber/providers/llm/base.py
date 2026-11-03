@@ -45,6 +45,21 @@ class LLMEmptyResponse(LLMError):
         super().__init__("empty response", "the model returned an empty response")
 
 
+class LLMTruncatedError(LLMError):
+    """finish_reason == 'length': the token budget cut the answer short.
+
+    Reasoning models (e.g. GLM thinking) spend tokens on hidden
+    'reasoning_content' BEFORE the visible answer, so a small
+    max_tokens can exhaust the budget mid-thought and the bubble only
+    ever receives the first character or two."""
+
+    def __init__(self, message: str = ""):
+        super().__init__(message,
+                         "answer cut off: max tokens reached - raise "
+                         "'max tokens' in AI settings (reasoning models "
+                         "think before answering and need a bigger budget)")
+
+
 @dataclass
 class LLMRequest:
     """One chat request: full message list + generation parameters."""

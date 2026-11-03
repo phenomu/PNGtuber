@@ -75,7 +75,8 @@ class LLMEngine:
                  contexts: ContextManager,
                  conversations: ConversationManager,
                  temperature: float = 0.7, max_tokens: int = 300,
-                 timeout_s: float = 60.0, streaming: bool = True):
+                 timeout_s: float = 60.0, streaming: bool = True,
+                 reasoning: bool = True):
         self.provider = provider
         self.contexts = contexts
         self.conversations = conversations
@@ -83,11 +84,13 @@ class LLMEngine:
         self.max_tokens = max_tokens
         self.timeout_s = timeout_s
         self.streaming = streaming
+        self.reasoning = reasoning
 
     def apply_settings(self, temperature: float | None = None,
                        max_tokens: int | None = None,
                        timeout_s: float | None = None,
-                       streaming: bool | None = None) -> None:
+                       streaming: bool | None = None,
+                       reasoning: bool | None = None) -> None:
         if temperature is not None:
             self.temperature = max(0.0, min(2.0, float(temperature)))
         if max_tokens is not None:
@@ -96,6 +99,8 @@ class LLMEngine:
             self.timeout_s = max(5.0, min(300.0, float(timeout_s)))
         if streaming is not None:
             self.streaming = bool(streaming)
+        if reasoning is not None:
+            self.reasoning = bool(reasoning)
 
     def _messages(self, persona: Persona, context: ContextConfig,
                   user_text: str) -> list[dict]:
@@ -107,19 +112,27 @@ class LLMEngine:
         return messages
 
     def respond(self, user_text: str, on_delta=None, cancel_event=None) -> str:
-        """Full turn: history + prompt -> provider -> store both messages.
+        """Full turn: history + prompt -> provider -> store conversation.
 
         Raises LLM errors; caller decides error states. On cancellation the
         user message is NOT stored (the turn never completed).
         """
         persona = self.contexts.persona()
         context = self.contexts.active_context()
+        extra: dict = {}
+        if not self.reasoning:
+            # reasoning models (GLM thinking, R1, ...) burn the max_tokens
+            # budget on hidden 'reasoning_content' BEFORE the visible
+            # answer, cutting the answer to 1-3 chars; disabling thinking
+            # makes the answer stream fully and much faster
+            extra["enable_thinking"] = False
         request = LLMRequest(
             messages=self._messages(persona, context, user_text),
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             timeout_s=self.timeout_s,
             cancel_event=cancel_event,
+            extra=extra or None,
         )
         if self.streaming:
             text = self.provider.stream(request, on_delta=on_delta)

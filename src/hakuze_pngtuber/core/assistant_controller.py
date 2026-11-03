@@ -277,7 +277,8 @@ class AssistantController:
             temperature=self._cfg.llm_temperature,
             max_tokens=self._cfg.llm_max_tokens,
             timeout_s=self._cfg.llm_timeout_s,
-            streaming=self._cfg.llm_streaming)
+            streaming=self._cfg.llm_streaming,
+            reasoning=self._cfg.llm_reasoning)
 
         # wake engine snapshot bug: phrase/mode/sensitivity changed in the
         # UI must apply while ON (same class as the provider snapshot bug)
@@ -610,7 +611,8 @@ class AssistantController:
             temperature=self._cfg.llm_temperature,
             max_tokens=self._cfg.llm_max_tokens,
             timeout_s=self._cfg.llm_timeout_s,
-            streaming=self._cfg.llm_streaming)
+            streaming=self._cfg.llm_streaming,
+            reasoning=self._cfg.llm_reasoning)
         self.fsm.transition(AssistantState.THINKING)
         self.emit("status", message="thinking...")
         show_bubble = self._cfg.bubble_enabled and (

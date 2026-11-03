@@ -29,9 +29,10 @@ class AssistantSettings:
     llm_base_url: str = "https://api.ate.my.id/v1"
     llm_model: str = ""
     llm_temperature: float = 0.7
-    llm_max_tokens: int = 300
+    llm_max_tokens: int = 1024
     llm_timeout_s: float = 60.0
     llm_streaming: bool = True
+    llm_reasoning: bool = False   # GLM/R1 thinking models: OFF by default
     # stt (OpenAI)
     stt_model: str = "gpt-4o-mini-transcribe"
     stt_base_url: str = ""      # empty = api.openai.com; else route via gateway
@@ -102,9 +103,10 @@ class AssistantSettings:
                               "https://api.ate.my.id/v1", 300).strip()
         out.llm_model = gs("llm_model", "", 200).strip()
         out.llm_temperature = gf("llm_temperature", 0.7, 0.0, 2.0)
-        out.llm_max_tokens = gi("llm_max_tokens", 300, 16, 4096)
+        out.llm_max_tokens = gi("llm_max_tokens", 1024, 16, 4096)
         out.llm_timeout_s = gf("llm_timeout_s", 60.0, 5.0, 300.0)
         out.llm_streaming = gb("llm_streaming", True)
+        out.llm_reasoning = gb("llm_reasoning", False)
         out.stt_model = gs("stt_model", "gpt-4o-mini-transcribe", 120).strip()
         out.stt_base_url = gs("stt_base_url", "", 300).strip()
         out.stt_language = gs("stt_language", "", 16).strip().lower()

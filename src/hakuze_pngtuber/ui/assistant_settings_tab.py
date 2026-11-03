@@ -282,6 +282,16 @@ class AssistantSettingsTab(QWidget):
         self.tg_llm_stream.toggled.connect(
             lambda v: self._save("ai.llm_streaming", v))
         col.addWidget(self.tg_llm_stream)
+        self.tg_llm_reason = ToggleRow(
+            "thinking model (slower, deep reasoning)",
+            bool(settings.get("ai.llm_reasoning", False)))
+        self.tg_llm_reason.toggled.connect(
+            lambda v: self._save("ai.llm_reasoning", v))
+        self.tg_llm_reason.setToolTip(
+            "OFF: models like GLM 'thinking' answer instantly.\n"
+            "ON: the model reasons first (long 'thinking' pause) and needs\n"
+            "a much larger max tokens budget, or the answer gets cut off.")
+        col.addWidget(self.tg_llm_reason)
         self.btn_test_llm = QPushButton("test connection")
         self.btn_test_llm.setObjectName("flat")
         self.btn_test_llm.clicked.connect(lambda: self.test_requested.emit("llm"))

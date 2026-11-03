@@ -22,6 +22,7 @@ from .base import (
     LLMModelError,
     LLMRequest,
     LLMTimeoutError,
+    LLMTruncatedError,
 )
 
 
@@ -161,8 +162,12 @@ class OpenAICompatibleLLM(BaseLLMProvider):
             raise LLMCancelled()
         try:
             text = response.choices[0].message.content or ""
+            finish = response.choices[0].finish_reason
         except (AttributeError, IndexError, TypeError) as exc:
             raise LLMEmptyResponse() from exc
+        if finish == "length":
+            raise LLMTruncatedError(
+                f"finish_reason=length, partial={len(text)} chars")
         if not text.strip():
             raise LLMEmptyResponse()
         return text
@@ -175,12 +180,16 @@ class OpenAICompatibleLLM(BaseLLMProvider):
         try:
             chunk_iter = client.chat.completions.create(**kwargs)
             parts: list[str] = []
+            finish_reason = None
             for chunk in chunk_iter:
                 if request.cancelled:
                     raise LLMCancelled()
                 delta = ""
                 try:
-                    piece = chunk.choices[0].delta.content
+                    ch = chunk.choices[0]
+                    if ch.finish_reason:
+                        finish_reason = ch.finish_reason
+                    piece = ch.delta.content
                     if piece:
                         delta = piece
                 except (AttributeError, IndexError, TypeError):
@@ -197,6 +206,9 @@ class OpenAICompatibleLLM(BaseLLMProvider):
         if request.cancelled:
             raise LLMCancelled()
         text = "".join(parts)
+        if finish_reason == "length":
+            raise LLMTruncatedError(
+                f"finish_reason=length, partial={len(text)} chars")
         if not text.strip():
             raise LLMEmptyResponse()
         return text
@@ -241,7 +253,8 @@ class MockLLM(BaseLLMProvider):
         self.cancel_after_chunks = None  # stream: cancel after N chunks
 
     def complete(self, request: LLMRequest) -> str:
-        self.calls.append({"messages": request.messages, "stream": False})
+        self.calls.append({"messages": request.messages, "stream": False,
+                           "extra": request.extra})
         if self.error is not None:
             raise self.error
         if self.delay_s:
@@ -254,7 +267,8 @@ class MockLLM(BaseLLMProvider):
         return text
 
     def stream(self, request: LLMRequest, on_delta=None) -> str:
-        self.calls.append({"messages": request.messages, "stream": True})
+        self.calls.append({"messages": request.messages, "stream": True,
+                           "extra": request.extra})
         if self.error is not None:
             raise self.error
         text = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]

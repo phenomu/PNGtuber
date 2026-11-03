@@ -399,6 +399,10 @@ class SettingsWindow(QMainWindow):
     def _on_ai_test(self, what: str) -> None:
         if getattr(self, "_assistant", None) is None:
             return
+        if hasattr(self, "ai_tab"):
+            # typed credentials must reach the store BEFORE the test runs
+            self.ai_tab.commit_keys()
+            self.ai_tab.refresh_context_list()
         if what == "llm":
             self._assistant.test_llm()
         elif what == "stt":

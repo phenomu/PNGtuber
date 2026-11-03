@@ -152,6 +152,69 @@ class AssistantController:
     def settings_changed(self) -> None:
         self._cmd("settings_changed")
 
+    # ---------------------------------------------------------- providers
+    def _refresh_providers(self) -> None:
+        """Reload settings + credentials into the live providers.
+
+        Providers keep a startup snapshot otherwise — keys/models/voices
+        typed later in the UI would never reach them (root cause of false
+        'invalid API key' / 'model unavailable' test failures).
+        """
+        self._cfg = AssistantSettings.from_settings(self._settings)
+        creds = self._credentials
+
+        llm = self._llm.provider
+        if hasattr(llm, "reconfigure"):
+            llm.reconfigure(
+                api_key=creds.get("llm_api_key"),
+                base_url=self._cfg.llm_base_url or None,
+                default_model=self._cfg.llm_model,
+                timeout_s=self._cfg.llm_timeout_s)
+
+        if hasattr(self._stt, "reconfigure"):
+            self._stt.reconfigure(
+                api_key=creds.get("openai_api_key"),
+                model=self._cfg.stt_model)
+
+        tts = self._tts
+        current = getattr(tts.provider, "name", "")
+        if current in ("openai-tts", "windows-sapi"):
+            # only swap between our concrete providers; anything else is a
+            # deliberately injected provider (tests/dev) — leave it alone
+            if self._cfg.tts_provider == "openai" and current != "openai-tts":
+                from ..providers.tts.openai_tts import OpenAITTS
+                tts.provider = OpenAITTS(
+                    api_key=creds.get("openai_api_key"),
+                    model=self._cfg.tts_openai_model)
+            elif self._cfg.tts_provider == "windows" and \
+                    current != "windows-sapi":
+                from ..providers.tts.openai_tts import WindowsSapiTTS
+                tts.provider = WindowsSapiTTS(
+                    voice=self._cfg.tts_voice or None)
+            elif hasattr(tts.provider, "reconfigure"):
+                if self._cfg.tts_provider == "openai":
+                    tts.provider.reconfigure(
+                        api_key=creds.get("openai_api_key"),
+                        model=self._cfg.tts_openai_model)
+                else:
+                    tts.provider.reconfigure(
+                        voice=self._cfg.tts_voice or None)
+        tts.set_volume(self._cfg.tts_volume)
+        tts.set_device(self._cfg.tts_output_device)
+
+        self._llm.apply_settings(
+            temperature=self._cfg.llm_temperature,
+            max_tokens=self._cfg.llm_max_tokens,
+            timeout_s=self._cfg.llm_timeout_s,
+            streaming=self._cfg.llm_streaming)
+
+    def tts_voices(self) -> list[str]:
+        """Voice names from the ACTIVE provider (for the settings combo)."""
+        try:
+            return list(self._tts.provider.list_voices())
+        except Exception:  # noqa: BLE001 - never break UI for a list
+            return []
+
     def test_llm(self) -> None:
         self._cmd("test_llm")
 
@@ -207,7 +270,7 @@ class AssistantController:
                 elif kind == "context_changed":
                     self._reset_pipeline(keep_on=True)
                 elif kind == "settings_changed":
-                    self._cfg = AssistantSettings.from_settings(self._settings)
+                    self._refresh_providers()
                 elif kind == "test_llm":
                     self._do_test_llm()
                 elif kind == "test_stt":
@@ -227,7 +290,7 @@ class AssistantController:
             self._turn_on()
 
     def _turn_on(self) -> None:
-        self._cfg = AssistantSettings.from_settings(self._settings)
+        self._refresh_providers()
         if not self.fsm.transition(AssistantState.IDLE):
             self.fsm.force_off()
             return
@@ -481,16 +544,28 @@ class AssistantController:
 
     # ================================================================ tests
     def _do_test_llm(self) -> None:
+        self._refresh_providers()
         ok, message = self._llm.test_connection()
         self.emit("test_result", what="llm", ok=ok, message=message)
 
     def _do_test_stt(self) -> None:
+        self._refresh_providers()
         ok, message = self._stt.test_connection()
         self.emit("test_result", what="stt", ok=ok, message=message)
 
     def _do_test_tts(self, text: str) -> None:
         if not text:
             text = "Halo! Aku Hakuze."
+        self._refresh_providers()
+        voice = self._cfg.tts_voice
+        if voice:
+            try:
+                known = self._tts.provider.list_voices()
+            except Exception:  # noqa: BLE001
+                known = []
+            if known and voice not in known:
+                self.emit("status",
+                          message=f"voice '{voice}' not found - using default")
         try:
             self._tts.speak_text(text, voice=self._cfg.tts_voice or None,
                                  speed=self._cfg.tts_speed)

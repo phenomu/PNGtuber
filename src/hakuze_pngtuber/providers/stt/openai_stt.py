@@ -42,6 +42,15 @@ class OpenAISTT(BaseSTTProvider):
     def reset(self) -> None:
         self._client = None
 
+    def reconfigure(self, api_key: str | None = None,
+                    model: str | None = None) -> None:
+        """Hot-apply new credentials/model; drops the cached client."""
+        if api_key is not None:
+            self._api_key = api_key
+        if model is not None:
+            self._model = model or "gpt-4o-mini-transcribe"
+        self._client = None
+
     def transcribe(self, request: STTRequest) -> str:
         if request.cancel_event is not None and request.cancel_event.is_set():
             raise STTCancelled()

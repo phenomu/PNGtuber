@@ -645,6 +645,90 @@ class TestAssistantController:
         ctrl.shutdown()
 
 
+# ---------------------------------------------------------------- hot reload
+class TestProviderHotReconfigure:
+
+    def test_llm_key_and_model_reach_provider(self, settings, contexts,
+                                              conversations):
+        from hakuze_pngtuber.providers.llm.openai_compatible import \
+            OpenAICompatibleLLM
+        from hakuze_pngtuber.core.llm_engine import LLMEngine
+        provider = OpenAICompatibleLLM(api_key=None, default_model="",
+                                       base_url="https://api.ate.my.id/v1")
+        llm = LLMEngine(provider, contexts, conversations, streaming=False)
+        ctrl = AssistantController(
+            settings, contexts, conversations, llm, MockSTT(["q"]),
+            TTSEngine(MockTTS()))
+        ctrl._credentials = _FakeCreds({"llm_api_key": "sk-live",
+                                        "openai_api_key": "sk-oa"})
+        settings.set("ai.llm_model", "nr/glm-5.3")
+        settings.set("ai.llm_base_url", "https://api.ate.my.id/v1")
+        ctrl._refresh_providers()
+        assert provider._api_key == "sk-live"
+        assert provider._default_model == "nr/glm-5.3"
+        assert provider._base_url == "https://api.ate.my.id/v1"
+
+    def test_stt_key_reaches_provider(self, settings, contexts, conversations):
+        from hakuze_pngtuber.providers.stt.openai_stt import OpenAISTT
+        from hakuze_pngtuber.core.llm_engine import LLMEngine
+        stt = OpenAISTT(api_key=None, model="gpt-4o-mini-transcribe")
+        llm = LLMEngine(MockLLM(["x"]), contexts, conversations,
+                        streaming=False)
+        ctrl = AssistantController(
+            settings, contexts, conversations, llm, stt,
+            TTSEngine(MockTTS()))
+        ctrl._credentials = _FakeCreds({"openai_api_key": "sk-oa"})
+        settings.set("ai.stt_model", "whisper-1")
+        ctrl._refresh_providers()
+        assert stt._api_key == "sk-oa"
+        assert stt._model == "whisper-1"
+
+    def test_tts_provider_swapped_without_restart(self, settings, contexts,
+                                                  conversations):
+        from hakuze_pngtuber.providers.tts.openai_tts import (
+            OpenAITTS, WindowsSapiTTS)
+        from hakuze_pngtuber.core.llm_engine import LLMEngine
+        tts = TTSEngine(WindowsSapiTTS())
+        llm = LLMEngine(MockLLM(["x"]), contexts, conversations,
+                        streaming=False)
+        ctrl = AssistantController(
+            settings, contexts, conversations, llm, MockSTT(["q"]), tts)
+        ctrl._credentials = _FakeCreds({})
+        settings.set("ai.tts_provider", "openai")
+        ctrl._refresh_providers()
+        assert isinstance(tts.provider, OpenAITTS)
+        settings.set("ai.tts_provider", "windows")
+        ctrl._refresh_providers()
+        assert isinstance(tts.provider, WindowsSapiTTS)
+
+    def test_mock_provider_never_swapped(self, settings, contexts,
+                                         conversations):
+        mock = MockTTS()
+        tts = TTSEngine(mock)
+        llm = LLMEngine(MockLLM(["x"]), contexts, conversations,
+                        streaming=False)
+        ctrl = AssistantController(
+            settings, contexts, conversations, llm, MockSTT(["q"]), tts)
+        ctrl._credentials = _FakeCreds({})
+        settings.set("ai.tts_provider", "openai")
+        ctrl._refresh_providers()
+        assert tts.provider is mock  # injected providers are left alone
+
+
+class _FakeCreds(CredentialStore):
+    """Cred store stub with fixed values (never touches keyring)."""
+
+    def __init__(self, values: dict):
+        super().__init__(keyring_backend=None)
+        self._values = values
+
+    def get(self, name: str):
+        return self._values.get(name)
+
+    def status(self, name: str):
+        return "session" if name in self._values else "missing"
+
+
 # ---------------------------------------------------------------- creds
 class TestCredentialStore:
 
@@ -681,10 +765,21 @@ class TestCredentialStore:
         assert store.status("openai_api_key") == "session"
 
     def test_env_fallback(self, monkeypatch):
+        # sandbox ALL credential sources so real machine credentials can't
+        # leak into the test (keyring may hold a user's actual key)
+        class _NoKeyring:
+            @staticmethod
+            def get_password(*_a):
+                return None
+
+        monkeypatch.delenv("HAKUZE_LLM_API_KEY", raising=False)
+        monkeypatch.delenv("HAKUZE_OPENAI_API_KEY", raising=False)
+        store = CredentialStore(keyring_backend=_NoKeyring())
+        assert store.get("llm_api_key") is None
         monkeypatch.setenv("HAKUZE_LLM_API_KEY", "env-key")
-        store = CredentialStore(keyring_backend=None)
-        assert store.get("llm_api_key") == "env-key"
-        assert store.status("llm_api_key") == "env"
+        store2 = CredentialStore(keyring_backend=_NoKeyring())
+        assert store2.get("llm_api_key") == "env-key"
+        assert store2.status("llm_api_key") == "env"
 
     def test_unknown_name_rejected(self):
         store = CredentialStore(keyring_backend=None)

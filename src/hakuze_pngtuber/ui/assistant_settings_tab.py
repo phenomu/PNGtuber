@@ -61,6 +61,14 @@ class SecretEdit(QWidget):
         if text.strip():
             self.changed.emit(text.strip())
 
+    def consume(self) -> str:
+        """Return the typed key and clear the field (keeps the masked look)."""
+        text = self._edit.text().strip()
+        if text:
+            self._edit.clear()
+            self._edit.setPlaceholderText(self._status_text())
+        return text
+
     def _clear(self) -> None:
         self._store.delete(self._name)
         self._edit.clear()
@@ -261,12 +269,27 @@ class AssistantSettingsTab(QWidget):
         row.addWidget(QLabel("voice"))
         self.cmb_tts_voice = QComboBox()
         self.cmb_tts_voice.setEditable(True)
-        self.cmb_tts_voice.setCurrentText(str(settings.get("ai.tts_voice", "")))
+        self.cmb_tts_voice.setToolTip(
+            "engine voice name (SAPI voices on Windows / OpenAI voices) — "
+            "this selects WHO speaks, not the text; the test button speaks "
+            "a fixed sample sentence")
         self.cmb_tts_voice.setPlaceholderText("provider default")
         self.cmb_tts_voice.currentTextChanged.connect(
             lambda v: self._save("ai.tts_voice", v))
         row.addWidget(self.cmb_tts_voice, 1)
         col.addLayout(row)
+        # populate with the REAL voice list from the active provider
+        try:
+            voices = controller.tts_voices() if controller is not None else []
+        except Exception:  # noqa: BLE001 - list is cosmetic
+            voices = []
+        if voices:
+            self.cmb_tts_voice.blockSignals(True)
+            self.cmb_tts_voice.clear()
+            self.cmb_tts_voice.addItems(voices)
+            self.cmb_tts_voice.setCurrentText(
+                str(settings.get("ai.tts_voice", "")))
+            self.cmb_tts_voice.blockSignals(False)
         self.sl_tts_speed = LabeledSlider(
             "speed", 0.25, 4.0, float(settings.get("ai.tts_speed", 1.0)))
         self.sl_tts_speed.value_changed.connect(
@@ -483,9 +506,12 @@ class AssistantSettingsTab(QWidget):
         self._pending_keys[name] = text
 
     def commit_keys(self) -> None:
-        """Persist any typed API keys (called on tab change / app close)."""
-        for name, text in self._pending_keys.items():
-            self._store_key(name, text)
+        """Persist any typed API keys (called on test / toggle / app close)."""
+        for name, edit in (("openai_api_key", self.sec_openai),
+                           ("llm_api_key", self.sec_llm)):
+            text = edit.consume()
+            if text:
+                self._store_key(name, text)
         self._pending_keys.clear()
 
     def _store_key(self, name: str, text: str) -> None:

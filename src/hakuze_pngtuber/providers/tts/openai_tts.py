@@ -35,6 +35,15 @@ class OpenAITTS(BaseTTSProvider):
     def reset(self) -> None:
         self._client = None
 
+    def reconfigure(self, api_key: str | None = None,
+                    model: str | None = None) -> None:
+        """Hot-apply new credentials/model; drops the cached client."""
+        if api_key is not None:
+            self._api_key = api_key
+        if model is not None:
+            self._model = model or "gpt-4o-mini-tts"
+        self._client = None
+
     def synthesize(self, request: TTSRequest) -> bytes:
         if request.cancel_event is not None and request.cancel_event.is_set():
             raise TTSCancelled()
@@ -87,9 +96,20 @@ class WindowsSapiTTS(BaseTTSProvider):
         self._voice = voice
         self._rate = rate
 
+    def reconfigure(self, voice: str | None = None,
+                    rate: int | None = None) -> None:
+        """Hot-apply voice/rate; the engine is rebuilt on next use."""
+        if voice is not None:
+            self._voice = voice or None
+            self._engine = None
+        if rate is not None:
+            self._rate = int(rate)
+            self._engine = None
+
     def _make_engine(self):
         import pyttsx3  # noqa: PLC0415 - Windows-only dep, optional
         engine = pyttsx3.init()
+        self._base_rate = engine.getProperty("rate") or 200
         if self._voice:
             for v in engine.getProperty("voices"):
                 if v.name == self._voice:
@@ -104,6 +124,20 @@ class WindowsSapiTTS(BaseTTSProvider):
         try:
             if self._engine is None:
                 self._engine = self._make_engine()
+            # per-request voice (falls back to the configured default)
+            voice = request.voice or self._voice
+            if voice:
+                for v in self._engine.getProperty("voices"):
+                    if v.name == voice:
+                        self._engine.setProperty("voice", v.id)
+                        break
+            # per-request speed via base rate (SAPI rate ~ wpm)
+            speed = float(request.speed or 1.0)
+            if speed != 1.0:
+                base = getattr(self, "_base_rate", None) or 200
+                self._engine.setProperty("rate", int(base * speed))
+            self._engine.setProperty(
+                "volume", max(0.0, min(1.0, float(request.volume or 1.0))))
             import tempfile
             fd, path = tempfile.mkstemp(suffix=".wav")
             import os

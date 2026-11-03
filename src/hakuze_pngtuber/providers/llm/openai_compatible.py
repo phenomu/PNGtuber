@@ -25,6 +25,7 @@ from .base import (
 )
 
 
+
 class OpenAICompatibleLLM(BaseLLMProvider):
     """Client for any OpenAI-compatible endpoint."""
 
@@ -66,6 +67,26 @@ class OpenAICompatibleLLM(BaseLLMProvider):
 
     def reset(self) -> None:
         with self._client_lock:
+            self._client = None
+
+    def reconfigure(self, api_key: str | None = None, base_url: str | None = None,
+                    default_model: str | None = None,
+                    timeout_s: float | None = None) -> None:
+        """Hot-apply new credentials/model/URL; drops the cached client.
+
+        Called by the controller on toggle/test/settings-change so values
+        typed in the UI actually reach the provider without a restart.
+        Unspecified (None) arguments keep their current values.
+        """
+        with self._client_lock:
+            if api_key is not None:
+                self._api_key = api_key
+            if base_url is not None:
+                self._base_url = base_url or None
+            if default_model is not None:
+                self._default_model = default_model
+            if timeout_s is not None:
+                self._timeout = float(timeout_s)
             self._client = None
 
     # ---------------------------------------------------------------- kwargs

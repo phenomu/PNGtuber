@@ -62,6 +62,34 @@ No Python installation needed.
 7. Talk — the character bounces up and switches to the talking sprite;
    stop — it eases back down and desaturates.
 
+## AI Companion Mode (beta)
+
+Turn the character into a voice-driven AI assistant. Press **END** to toggle.
+Talk to it; responses appear in an animated dialogue bubble above the avatar
+(and can be spoken aloud).
+
+- **Providers are independent**: STT = direct OpenAI transcription; LLM = any
+  OpenAI-compatible endpoint (9Router by default); TTS = Windows local SAPI
+  or OpenAI TTS
+- **Contexts**: Minecraft, General Conversation, and unlimited user-defined
+  contexts with per-context system instructions, knowledge and separate
+  conversation history
+- **Persona**: global (name, personality, language, tone, emoji, response
+  length) — never overridden by a context
+- **Wake modes**: energy (any speech), phrase-verify (checks the wake phrase
+  like "Hai GPT" in the transcript), or manual listening; manual listen is
+  always available as a fallback
+- **Output modes**: text (bubble), voice (TTS), both
+- **Privacy**: mic audio is only captured after activation; credentials live
+  in Windows Credential Manager (keyring), never in files; no continuous
+  audio upload; conversation history is session-only by default
+
+Setup: open Settings → **AI Assistant** tab, paste your API keys (stored in
+Windows Credential Manager), pick models, test each connection, then press
+**END**. The wake mode, hotkey, and all limits are configurable there.
+Contexts can be created/edited in the same tab, or switched quickly from the
+tray icon menu.
+
 ## OBS Integration
 
 1. In OBS: **Sources → + → Window Capture**
